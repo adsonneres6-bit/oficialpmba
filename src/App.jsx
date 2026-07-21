@@ -3721,19 +3721,35 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (cloudLoading) return undefined;
-    const timeout = setTimeout(async () => {
-      const result = await saveStateToSupabase(appState);
-      setCloudStatus(
-        result.ok
-          ? `Salvo no Supabase às ${new Date().toLocaleTimeString("pt-BR")}`
-          : result.source === "local"
-            ? "Supabase não configurado; salvo somente no cache local."
-            : "Falha ao salvar no Supabase; backup local atualizado.",
-      );
-    }, 1500);
-    return () => clearTimeout(timeout);
-  }, [appState, cloudLoading]);
+  if (cloudLoading) return undefined;
+
+  const timeout = setTimeout(async () => {
+    const portugues = appState.roadmap.find(
+      (s) => s.id === "lingua_portuguesa",
+    );
+
+    console.log(
+      "Português:",
+      portugues?.topics.find((t) =>
+        t.title.includes("Reconhecimento"),
+      ),
+    );
+
+    const result = await saveStateToSupabase(appState);
+
+    console.log("Resultado:", result);
+
+    setCloudStatus(
+      result.ok
+        ? `Salvo no Supabase às ${new Date().toLocaleTimeString("pt-BR")}`
+        : result.source === "local"
+          ? "Supabase não configurado; salvo somente no cache local."
+          : "Falha ao salvar no Supabase; backup local atualizado.",
+    );
+  }, 1500);
+
+  return () => clearTimeout(timeout);
+}, [appState, cloudLoading]);
 
   const subjectsList = useMemo(
     () =>
