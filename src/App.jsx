@@ -8378,7 +8378,7 @@ export default function App() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-900">
-              Estudos PMBA
+              Militar
             </p>
             <p className="text-sm font-black text-stone-950">Navegação</p>
           </div>
@@ -8413,7 +8413,7 @@ export default function App() {
               <p className="text-xs uppercase tracking-[0.22em] text-amber-100">
                 Plano de estudos
               </p>
-              <h1 className="text-xl font-black">Estudos PMBA</h1>
+              <h1 className="text-xl font-black">Militar</h1>
             </div>
           </div>
           <div className="mt-5">
@@ -12243,7 +12243,7 @@ export default function App() {
                             }))
                           }
                           className="w-full rounded-2xl border border-stone-200 px-4 py-3"
-                          placeholder="Ex: PMBA Soldado 2027"
+                          placeholder="Ex: Soldado 2027"
                         />
                       </label>
                       <label className="space-y-1 text-sm font-semibold text-stone-700">
