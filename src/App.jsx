@@ -33,22 +33,13 @@ import {
 } from "lucide-react";
 
 const APP_VERSION = "V4";
-const ROADMAP_VERSION = "PMBA_SOLDADO_2026_V1";
+const ROADMAP_VERSION = "EMPTY_V1";
 const USER_PROFILE_KEY = "usuario_principal";
-const ACTIVE_EXAM_KEY = "pmba_soldado";
+const ACTIVE_EXAM_KEY = "";
 const STORAGE_PROFILE_KEY = `${USER_PROFILE_KEY}__${ACTIVE_EXAM_KEY}`;
 const PROFILE_INDEX_KEY = `${USER_PROFILE_KEY}__profile_index`;
 const ACTIVE_EXAM_LOCAL_KEY = `study_app_active_exam__${USER_PROFILE_KEY}`;
-const EXAM_OPTIONS = [
-  {
-    key: "pmba_soldado",
-    label: "PMBA Soldado",
-    board: "PMBA",
-    status: "ativo",
-    roadmapVersion: ROADMAP_VERSION,
-    examDate: "",
-  },
-];
+const EXAM_OPTIONS = [];
 function slugifyExamKey(value) {
   return (
     String(value || "")
@@ -87,7 +78,7 @@ function findExamDefinition(examKey, customExams = []) {
   return (
     [...EXAM_OPTIONS, ...normalizeCustomExamList(customExams)].find(
       (exam) => exam.key === examKey,
-    ) || EXAM_OPTIONS[0]
+    ) || null
   );
 }
 
@@ -121,8 +112,10 @@ const SUPABASE_TABLE = "study_app_states";
 const LOCAL_CACHE_KEY = `study_app_state_cache__${STORAGE_PROFILE_KEY}`;
 const DEVICE_ID_KEY = "study_app_device_id";
 const PREVIOUS_DAY_QUESTION_ALERT_ACK_KEY = `study_app_previous_day_question_alert_ack__${STORAGE_PROFILE_KEY}`;
+
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
 const supabase =
   SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY
     ? createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY)
@@ -155,20 +148,20 @@ const WEEK_NUMBERS = Array.from({ length: 12 }, (_, index) => index + 1);
 const MANUAL_SPECIAL_BLOCKS = [
   {
     id: "simulado",
-    subject: "Simulado semanal",
+    subject: "Simulado do ciclo",
     topic: "Resolver simulado e controlar tempo",
     type: "Simulado",
   },
   {
     id: "caderno_erros",
     subject: "Revisão de erros",
-    topic: "Resolver e revisar erros da semana",
+    topic: "Resolver e revisar erros do ciclo",
     type: "Revisão",
   },
   {
     id: "planejamento",
-    subject: "Planejamento semanal",
-    topic: "Gerar e ajustar a próxima semana",
+    subject: "Planejamento do ciclo",
+    topic: "Gerar e ajustar o próximo ciclo",
     type: "Planejamento",
   },
 ];
@@ -195,1096 +188,7 @@ const motivationalMessages = [
   "A persistência nos dias difíceis aumenta suas chances de alcançar seus objetivos. Quem persiste por mais tempo costuma chegar mais longe.",
 ];
 
-const roadmapSeed = [
-  {
-    id: "portugues",
-    subject: "Língua Portuguesa",
-    weight: 10,
-    priority: "Alta",
-    status: "Aguardando início",
-    reason:
-      "Base de conhecimentos gerais. Prioridade alta para interpretação, gramática e norma-padrão.",
-    topics: [
-      {
-        id: "por1",
-        title: "Compreensão e interpretação de textos",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "por2",
-        title: "Tipologia textual e gêneros textuais",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "por3",
-        title: "Ortografia oficial",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "por4",
-        title: "Acentuação gráfica",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "por5",
-        title: "Classes de palavras",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "por6",
-        title: "Uso do sinal indicativo de crase",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "por7",
-        title: "Sintaxe da oração e do período",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "por8",
-        title: "Pontuação",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "por9",
-        title: "Concordância nominal e verbal",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "por10",
-        title: "Regência nominal e verbal",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "por11",
-        title: "Significação das palavras",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-    ],
-  },
-  {
-    id: "historia_bahia",
-    subject: "História da Bahia",
-    weight: 8,
-    priority: "Alta",
-    status: "Aguardando início",
-    reason:
-      "História do Brasil com foco especial nos movimentos e fatos históricos da Bahia.",
-    topics: [
-      {
-        id: "his1",
-        title: "Descobrimento do Brasil (1500)",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "his2",
-        title:
-          "Brasil Colônia: capitanias, economia, extrativismo, pecuária e escravidão",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "his3",
-        title:
-          "Brasil Colônia: organização político-administrativa e expansão territorial",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "his4",
-        title:
-          "Independência do Brasil: D. Pedro I, Dia do Fico e reconhecimento",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "his5",
-        title: "Primeiro Reinado",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "his6",
-        title: "Segundo Reinado",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "his7",
-        title:
-          "Primeira República: governo provisório, Constituinte, Deodoro, Política dos Governadores e Coronelismo",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "his8",
-        title:
-          "Primeira República: tenentismo, Coluna Prestes e Revolta da Armada",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "his9",
-        title: "Revolução de 1930",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "his10",
-        title: "Era Vargas (1930-1945)",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "his11",
-        title: "Presidentes do Brasil de 1964 à atualidade",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "his12",
-        title: "História da Bahia",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "his13",
-        title: "Independência da Bahia",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "his14",
-        title: "Revolta de Canudos",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "his15",
-        title: "Revolta dos Malês",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "his16",
-        title: "Conjuração Baiana",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "his17",
-        title: "Sabinada",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-    ],
-  },
-  {
-    id: "geografia_bahia",
-    subject: "Geografia da Bahia",
-    weight: 8,
-    priority: "Alta",
-    status: "Aguardando início",
-    reason:
-      "Geografia do Brasil com foco em aspectos físicos, econômicos, sociais e culturais da Bahia.",
-    topics: [
-      {
-        id: "geo1",
-        title: "Relevo brasileiro",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "geo2",
-        title:
-          "Urbanização: crescimento urbano, problemas estruturais e população brasileira",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "geo3",
-        title:
-          "Matriz energética brasileira: eólica, hidráulica, biomassa, solar e marés",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "geo4",
-        title: "Problemas ambientais",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "geo5",
-        title:
-          "Clima: pressão atmosférica, umidade, temperatura e fatores climáticos",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "geo6",
-        title: "Mudanças climáticas e consequências",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "geo7",
-        title: "Geografia da Bahia: aspectos políticos e físicos",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "geo8",
-        title: "Geografia da Bahia: aspectos econômicos, sociais e culturais",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-    ],
-  },
-  {
-    id: "matematica",
-    subject: "Matemática",
-    weight: 8,
-    priority: "Alta",
-    status: "Aguardando início",
-    reason:
-      "Conteúdo extenso, com prioridade para resolução de problemas, álgebra, funções e geometria.",
-    topics: [
-      {
-        id: "mat1",
-        title:
-          "Conjuntos numéricos: naturais, inteiros, racionais, reais e complexos",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "mat2",
-        title: "Operações, propriedades e aplicações dos conjuntos numéricos",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "mat3",
-        title:
-          "Sequências numéricas, progressão aritmética e progressão geométrica",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "mat4",
-        title: "Álgebra: expressões algébricas",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "mat5",
-        title: "Polinômios: operações e propriedades",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "mat6",
-        title: "Equações polinomiais e inequações relacionadas",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "mat7",
-        title: "Funções: generalidades e propriedades",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "mat8",
-        title:
-          "Funções de 1º grau, 2º grau, modular, exponencial e logarítmica",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "mat9",
-        title: "Sistemas lineares, matrizes e determinantes",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "mat10",
-        title: "Análise combinatória: arranjos, permutações e combinações",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "mat11",
-        title: "Binômio de Newton e probabilidade",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "mat12",
-        title:
-          "Geometria plana: figuras, congruência, semelhança, perímetro e área",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "mat13",
-        title:
-          "Geometria espacial: prismas, pirâmides, cilindros, cones e esferas",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "mat14",
-        title: "Geometria analítica: retas, circunferência e distâncias",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "mat15",
-        title:
-          "Trigonometria: razões, funções, fórmulas, equações e triângulos",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-    ],
-  },
-  {
-    id: "atualidades",
-    subject: "Atualidades",
-    weight: 8,
-    priority: "Alta",
-    status: "Aguardando início",
-    reason:
-      "Atualidades deve ser mantida em revisão contínua, com foco em fenômenos sociais, políticos, econômicos e tecnológicos.",
-    topics: [
-      {
-        id: "atu1",
-        title: "Globalização: conceitos, efeitos e implicações sociais",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "atu2",
-        title: "Globalização: efeitos econômicos, políticos e culturais",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "atu3",
-        title: "Multiculturalidade, pluralidade e diversidade cultural",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "atu4",
-        title: "Tecnologias de Informação e Comunicação: conceitos",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "atu5",
-        title:
-          "Tecnologias de Informação e Comunicação: efeitos sociais, econômicos, políticos e culturais",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-    ],
-  },
-  {
-    id: "informatica",
-    subject: "Informática",
-    weight: 8,
-    priority: "Alta",
-    status: "Aguardando início",
-    reason:
-      "Conteúdo prático e recorrente em concursos: Office, LibreOffice, sistemas operacionais, internet e nuvem.",
-    topics: [
-      {
-        id: "inf1",
-        title: "Editores de texto: Word e Writer",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "inf2",
-        title: "Planilhas: Excel e Calc",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "inf3",
-        title: "Apresentações: PowerPoint e Impress",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "inf4",
-        title:
-          "Microsoft Office 2007 ou superior e LibreOffice 5.0 ou superior",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "inf5",
-        title: "Sistemas operacionais Windows 7, Windows 10 e Linux",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "inf6",
-        title: "Organização e gerenciamento de arquivos, pastas e programas",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "inf7",
-        title: "Atalhos de teclado, ícones, área de trabalho e lixeira",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "inf8",
-        title: "Internet e intranet: conceitos, ferramentas e procedimentos",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "inf9",
-        title: "Correio eletrônico",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "inf10",
-        title: "Computação em nuvem",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-    ],
-  },
-  {
-    id: "direito_constitucional",
-    subject: "Direito Constitucional",
-    weight: 5,
-    priority: "Alta",
-    status: "Aguardando início",
-    reason:
-      "Bloco jurídico essencial: Constituição Federal, Constituição da Bahia, militares e segurança pública.",
-    topics: [
-      {
-        id: "dco1",
-        title: "Constituição Federal: princípios fundamentais",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dco2",
-        title: "Constituição Federal: direitos e garantias fundamentais",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dco3",
-        title: "Constituição Federal: organização do Estado",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dco4",
-        title: "Constituição Federal: Administração Pública",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dco5",
-        title: "Constituição Federal: militares dos Estados, DF e Territórios",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dco6",
-        title: "Constituição Federal: Segurança Pública",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dco7",
-        title: "Constituição do Estado da Bahia: princípios fundamentais",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dco8",
-        title:
-          "Constituição do Estado da Bahia: direitos e garantias fundamentais",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dco9",
-        title: "Constituição do Estado da Bahia: servidores públicos militares",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dco10",
-        title: "Constituição do Estado da Bahia: Segurança Pública",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-    ],
-  },
-  {
-    id: "direitos_humanos",
-    subject: "Direitos Humanos",
-    weight: 5,
-    priority: "Média",
-    status: "Aguardando início",
-    reason: "Tratados e declarações com cobrança literal e conceitual.",
-    topics: [
-      {
-        id: "dhu1",
-        title: "Declaração Universal dos Direitos Humanos de 1948",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dhu2",
-        title: "Convenção Americana sobre Direitos Humanos: artigos 1º ao 32",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dhu3",
-        title:
-          "Pacto Internacional dos Direitos Econômicos, Sociais e Culturais: artigos 1º ao 15",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dhu4",
-        title: "Declaração de Pequim: igualdade, desenvolvimento e paz",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-    ],
-  },
-  {
-    id: "direito_administrativo",
-    subject: "Direito Administrativo",
-    weight: 5,
-    priority: "Alta",
-    status: "Aguardando início",
-    reason:
-      "Administração Pública, poderes administrativos e Estatuto dos Policiais Militares da Bahia.",
-    topics: [
-      {
-        id: "dad1",
-        title: "Administração Pública",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dad2",
-        title: "Princípios fundamentais da administração pública",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dad3",
-        title: "Poderes e deveres dos administradores públicos",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dad4",
-        title: "Uso e abuso do poder",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dad5",
-        title: "Poder vinculado e poder discricionário",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dad6",
-        title: "Poder hierárquico, disciplinar e regulamentar",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dad7",
-        title: "Poder de polícia",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dad8",
-        title: "Servidores públicos: cargo, emprego e função pública",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dad9",
-        title:
-          "Estatuto dos Policiais Militares da Bahia: Lei estadual nº 7.990/2001, arts. 1º ao 59",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-    ],
-  },
-  {
-    id: "direito_penal",
-    subject: "Direito Penal",
-    weight: 5,
-    priority: "Alta",
-    status: "Aguardando início",
-    reason:
-      "Parte penal geral e crimes específicos com grande importância prática para área policial.",
-    topics: [
-      {
-        id: "dpe1",
-        title: "Do crime: elementos",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dpe2",
-        title: "Consumação e tentativa",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dpe3",
-        title: "Desistência voluntária e arrependimento eficaz",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dpe4",
-        title: "Arrependimento posterior",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dpe5",
-        title: "Crime impossível",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dpe6",
-        title: "Causas de exclusão de ilicitude e culpabilidade",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dpe7",
-        title: "Contravenção",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dpe8",
-        title: "Crimes contra a vida: homicídio, lesão corporal e rixa",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dpe9",
-        title:
-          "Crimes contra a liberdade pessoal: constrangimento ilegal, ameaça, perseguição, sequestro e cárcere privado",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dpe10",
-        title:
-          "Crimes contra o patrimônio: furto, roubo, extorsão, apropriação indébita e receptação",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dpe11",
-        title:
-          "Crimes contra a dignidade sexual: estupro, importunação sexual e assédio sexual",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dpe12",
-        title: "Corrupção ativa e corrupção passiva",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dpe13",
-        title: "Lei nº 9.455/1997: crimes de tortura",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-    ],
-  },
-  {
-    id: "igualdade_racial_genero",
-    subject: "Igualdade Racial e de Gênero",
-    weight: 5,
-    priority: "Média",
-    status: "Aguardando início",
-    reason:
-      "Legislação específica de igualdade racial, gênero, crimes de preconceito e proteção da mulher.",
-    topics: [
-      {
-        id: "irg1",
-        title: "Constituição Federal: arts. 1º, 3º, 4º e 5º",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "irg2",
-        title: "Constituição do Estado da Bahia: Capítulo XXIII — Do Negro",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "irg3",
-        title: "Lei nº 12.288/2010: Estatuto da Igualdade Racial",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "irg4",
-        title:
-          "Lei nº 7.716/1989 e Lei nº 9.459/1997: crimes de preconceito de raça ou cor",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "irg5",
-        title: "Decreto nº 65.810/1969: eliminação da discriminação racial",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "irg6",
-        title:
-          "Decreto nº 4.377/2002: eliminação da discriminação contra a mulher",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "irg7",
-        title: "Lei nº 11.340/2006: Lei Maria da Penha",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "irg8",
-        title: "Código Penal: art. 140",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "irg9",
-        title: "Lei nº 9.455/1997: crime de tortura",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "irg10",
-        title: "Lei nº 7.437/1985: Lei Caó",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "irg11",
-        title:
-          "Lei Estadual nº 10.549/2006: Secretaria de Promoção da Igualdade Racial",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "irg12",
-        title:
-          "Lei nº 10.678/2003: Secretaria de Políticas de Promoção da Igualdade Racial",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-    ],
-  },
-  {
-    id: "direito_penal_militar",
-    subject: "Direito Penal Militar",
-    weight: 5,
-    priority: "Alta",
-    status: "Aguardando início",
-    reason:
-      "Crimes militares próprios, disciplina, serviço militar e Administração Militar.",
-    topics: [
-      {
-        id: "dpm1",
-        title:
-          "Crimes contra a autoridade ou disciplina militar: motim, revolta, conspiração e aliciação",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dpm2",
-        title: "Violência contra superior ou militar de serviço",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dpm3",
-        title: "Desrespeito a superior",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dpm4",
-        title: "Recusa de obediência",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dpm5",
-        title: "Reunião ilícita",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dpm6",
-        title: "Publicação ou crítica indevida",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dpm7",
-        title: "Resistência mediante ameaça ou violência",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dpm8",
-        title:
-          "Crimes contra o serviço e o dever militar: deserção, abandono de posto e descumprimento de missão",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dpm9",
-        title: "Embriaguez em serviço e dormir em serviço",
-        done: false,
-        priority: "Média",
-        difficulty: "Média",
-      },
-      {
-        id: "dpm10",
-        title:
-          "Crimes contra a Administração Militar: desacato, desobediência, peculato, peculato-furto e concussão",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "dpm11",
-        title: "Crimes contra o dever funcional: prevaricação",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-    ],
-  },
-  {
-    id: "redacao",
-    subject: "Redação",
-    weight: 8,
-    priority: "Alta",
-    status: "Aguardando início",
-    reason:
-      "Treino semanal para construção de texto dissertativo, argumentação, coesão e norma-padrão.",
-    topics: [
-      {
-        id: "red1",
-        title: "Estrutura dissertativo-argumentativa",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "red2",
-        title: "Tese e ponto de vista",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "red3",
-        title: "Argumentação clara e objetiva",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "red4",
-        title: "Coesão, coerência e conectivos",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "red5",
-        title: "Norma-padrão e revisão gramatical",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-      {
-        id: "red6",
-        title: "Treino de temas sociais e atuais",
-        done: false,
-        priority: "Alta",
-        difficulty: "Média",
-      },
-    ],
-  },
-];
+const roadmapSeed = [];
 
 const fixedWeekOnePlan = {
   segunda: ["portugues", "direito_constitucional"],
@@ -1300,7 +204,7 @@ const sundayWeekOnePlan = [
     id: "domingo-simulado",
     subjectId: "simulado",
     subject: "Simulado",
-    topic: "Simulado semanal",
+    topic: "Simulado do ciclo",
     type: "Simulado",
     minutes: 120,
   },
@@ -1308,15 +212,15 @@ const sundayWeekOnePlan = [
     id: "domingo-erros",
     subjectId: "caderno_erros",
     subject: "Caderno de Erros",
-    topic: "Resolver e revisar erros da semana",
+    topic: "Resolver e revisar erros do ciclo",
     type: "Correção",
     minutes: 60,
   },
   {
     id: "domingo-planejamento",
     subjectId: "planejamento",
-    subject: "Planejamento Semanal",
-    topic: "Gerar e ajustar a próxima semana",
+    subject: "Planejamento do Ciclo",
+    topic: "Gerar e ajustar o próximo ciclo",
     type: "Planejamento",
     minutes: 30,
   },
@@ -2265,12 +1169,12 @@ function subjectCycleCoverage(subject, items = []) {
   };
 }
 
-function cycleCoverageMessage(subject, items = [], context = "nas 12 semanas") {
+function cycleCoverageMessage(subject, items = [], context = "nos 12 ciclos") {
   const coverage = subjectCycleCoverage(subject, items);
   if (!coverage.totalTopics)
     return "Essa matéria ainda não tem tópicos cadastrados.";
   if (coverage.completed)
-    return `Zera o ciclo na Semana ${coverage.completedAtItem.week}, ${dayLabel(coverage.completedAtItem.dayKey)}. Até esse ponto, todos os ${coverage.totalTopics} tópicos aparecem pelo menos uma vez.`;
+    return `Zera o ciclo na Ciclo ${coverage.completedAtItem.week}, ${dayLabel(coverage.completedAtItem.dayKey)}. Até esse ponto, todos os ${coverage.totalTopics} tópicos aparecem pelo menos uma vez.`;
   return `Não zera o ciclo ${context}: cobre ${coverage.coveredTopics}/${coverage.totalTopics} tópicos (${coverage.percent}%) e ainda ficam ${coverage.missingTopics} tópico(s) sem aparecer.`;
 }
 
@@ -2341,6 +1245,62 @@ function topicDifficultyValue(topic) {
   if (difficulty === "Alta") return 3;
   if (difficulty === "Média") return 2;
   return 1;
+}
+
+function topicStatsForRanking(subjectId, topicId, questionSessions = []) {
+  const sessions = questionSessions.filter(
+    (session) =>
+      session.subjectId === subjectId &&
+      (session.topicId === topicId ||
+        (Array.isArray(session.topicIds) &&
+          session.topicIds.includes(topicId))),
+  );
+  const done = sessions.reduce(
+    (sum, session) => sum + Number(session.done || 0),
+    0,
+  );
+  const correct = sessions.reduce(
+    (sum, session) => sum + Number(session.correct || 0),
+    0,
+  );
+  const accuracy = done ? Math.round((correct / done) * 100) : 0;
+  const confidence = done <= 10 ? 0 : done <= 30 ? 1 : 2;
+  return { done, correct, accuracy, confidence, hasPerformance: done > 0 };
+}
+
+function subjectReadyForReorder(subject, questionSessions = []) {
+  const topics = subject?.topics || [];
+  if (!topics.length) return false;
+  return topics.every(
+    (topic) =>
+      topicStatsForRanking(subject.id, topic.id, questionSessions)
+        .hasPerformance,
+  );
+}
+
+function rankTopicsByPerformance(
+  subjectId,
+  topics = [],
+  questionSessions = [],
+) {
+  return [...topics].sort((a, b) => {
+    const aStats = topicStatsForRanking(subjectId, a.id, questionSessions);
+    const bStats = topicStatsForRanking(subjectId, b.id, questionSessions);
+    if (aStats.confidence !== bStats.confidence)
+      return bStats.confidence - aStats.confidence;
+    if (aStats.accuracy !== bStats.accuracy)
+      return aStats.accuracy - bStats.accuracy;
+    const aPri = topicPriorityValue(a);
+    const bPri = topicPriorityValue(b);
+    if (aPri !== bPri) return bPri - aPri;
+    return 0;
+  });
+}
+
+function sortTopicsForNextCycle(subject, questionSessions = []) {
+  const topics = subject?.topics || [];
+  if (!subjectReadyForReorder(subject, questionSessions)) return [...topics];
+  return rankTopicsByPerformance(subject.id, topics, questionSessions);
 }
 
 function sortTopicsByPriority(subjectId, topics = [], questionSessions = []) {
@@ -2585,7 +1545,7 @@ function buildTwelveWeekSchedule(
         elapsedSeconds: 0,
         topic:
           item.subjectId === "planejamento"
-            ? `Gerar e ajustar a Semana ${week + 1}`
+            ? `Gerar e ajustar o Ciclo ${week + 1}`
             : item.topic,
       }),
     );
@@ -2627,18 +1587,13 @@ function createInitialState(examOverride = null) {
     defaultSettings(),
     scheduleConfig,
   );
-  const weeklySchedule = buildTwelveWeekSchedule(
-    roadmap,
-    scheduleConfig,
-    settings,
-    [],
-  );
-  const schedule = scheduleFromWeekly(
-    weeklySchedule,
-    roadmap,
-    1,
-    TODAY_DAY_KEY,
-  );
+  const hasRoadmap = Array.isArray(roadmap) && roadmap.length > 0;
+  const weeklySchedule = hasRoadmap
+    ? buildTwelveWeekSchedule(roadmap, scheduleConfig, settings, [])
+    : [];
+  const schedule = hasRoadmap
+    ? scheduleFromWeekly(weeklySchedule, roadmap, 1, TODAY_DAY_KEY)
+    : [];
 
   const activeExamKey = examOverride?.key || ACTIVE_EXAM_KEY;
   return {
@@ -2653,7 +1608,7 @@ function createInitialState(examOverride = null) {
     view: "dashboard",
     currentStudyIsoDate: TODAY,
     currentStudyDayKey: TODAY_DAY_KEY,
-    currentStudyWeek: 1, // <-- alterar aqui
+    currentStudyWeek: 1,
     lastStudyDayKey: TODAY_DAY_KEY,
     lastScheduleSnapshot: schedule,
     schedule,
@@ -3097,6 +2052,89 @@ function CompletionModal({ block, form, setForm, onClose, onConfirm }) {
   );
   const wrong = Math.max(0, total - correct);
   const percent = total ? Math.round((correct / total) * 100) : 0;
+  const target = Math.max(0, Number(block.questionsTarget) || 0);
+  const missing = target > 0 ? Math.max(0, target - total) : 0;
+  const needsReason = missing > 0 && !form.missingReason;
+
+  if (needsReason && form.showReasonStep) {
+    return (
+      <AnimatePresence>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/50 p-4 backdrop-blur-sm"
+        >
+          <motion.div
+            initial={{ scale: 0.96, y: 12 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.96, y: 12 }}
+            className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-900">
+                  Questões pendentes
+                </p>
+                <h3 className="mt-1 text-xl font-black text-stone-950">
+                  Faltaram {missing} questão(ões)
+                </h3>
+                <p className="mt-1 text-sm text-stone-500">
+                  Meta: {target} • Feitas: {total}
+                </p>
+              </div>
+              <button
+                onClick={onClose}
+                className="rounded-2xl border border-stone-200 bg-white p-2 text-stone-500 hover:bg-stone-50"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="mt-5 text-sm font-semibold text-stone-700">
+              Por que faltaram essas {missing} questão(ões)?
+            </p>
+            <div className="mt-3 flex flex-col gap-3">
+              <button
+                onClick={() => {
+                  setForm((c) => ({ ...c, missingReason: "sem_questoes" }));
+                  onConfirm();
+                }}
+                className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-4 text-left hover:bg-stone-100"
+              >
+                <p className="font-bold text-stone-900">
+                  Não encontrei questões desse assunto
+                </p>
+                <p className="mt-1 text-xs text-stone-500">
+                  Assunto concluído. As {missing} questão(ões) não serão
+                  acumuladas no próximo dia.
+                </p>
+              </button>
+              <button
+                onClick={() => {
+                  setForm((c) => ({ ...c, missingReason: "vou_depois" }));
+                  onConfirm();
+                }}
+                className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-4 text-left hover:bg-amber-100"
+              >
+                <p className="font-bold text-amber-900">Vou fazer depois</p>
+                <p className="mt-1 text-xs text-amber-700">
+                  As {missing} questão(ões) serão acumuladas na meta do próximo
+                  dia.
+                </p>
+              </button>
+            </div>
+            <button
+              onClick={() => setForm((c) => ({ ...c, showReasonStep: false }))}
+              className="mt-4 w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold text-stone-600"
+            >
+              Voltar
+            </button>
+          </motion.div>
+        </motion.div>
+      </AnimatePresence>
+    );
+  }
+
   return (
     <AnimatePresence>
       <motion.div
@@ -3245,7 +2283,15 @@ function CompletionModal({ block, form, setForm, onClose, onConfirm }) {
               Cancelar
             </button>
             <button
-              onClick={onConfirm}
+              onClick={() => {
+                const t = Math.max(0, Number(form.totalQuestions) || 0);
+                const tgt = Math.max(0, Number(block.questionsTarget) || 0);
+                if (tgt > 0 && t < tgt) {
+                  setForm((c) => ({ ...c, showReasonStep: true }));
+                } else {
+                  onConfirm();
+                }
+              }}
               className="rounded-2xl bg-emerald-700 px-5 py-3 font-semibold text-white"
             >
               <CheckCircle2 size={16} className="inline" /> Salvar e concluir
@@ -3460,6 +2506,7 @@ export default function App() {
   const [reportDayFilter, setReportDayFilter] = useState("all");
   const [roadmapSubject, setRoadmapSubject] = useState("all");
   const [roadmapStatus, setRoadmapStatus] = useState("todos");
+  const [roadmapPriority, setRoadmapPriority] = useState("todas");
   const [query, setQuery] = useState("");
   const [reviewFilter, setReviewFilter] = useState("atual");
   const [errorSubjectFilter, setErrorSubjectFilter] = useState("all");
@@ -3539,7 +2586,10 @@ export default function App() {
     correctQuestions: "",
     errorText: "",
     fixText: "",
+    missingReason: "",
+    showReasonStep: false,
   });
+  const [questionsExcusedToday, setQuestionsExcusedToday] = useState(0);
   const [motivationOpen, setMotivationOpen] = useState(true);
   const [celebration, setCelebration] = useState(null);
   const dailyMotivation = useMemo(() => motivationalMessageForToday(), []);
@@ -3721,35 +2771,33 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-  if (cloudLoading) return undefined;
+    if (cloudLoading) return undefined;
 
-  const timeout = setTimeout(async () => {
-    const portugues = appState.roadmap.find(
-      (s) => s.id === "lingua_portuguesa",
-    );
+    const timeout = setTimeout(async () => {
+      const portugues = appState.roadmap.find(
+        (s) => s.id === "lingua_portuguesa",
+      );
 
-    console.log(
-      "Português:",
-      portugues?.topics.find((t) =>
-        t.title.includes("Reconhecimento"),
-      ),
-    );
+      console.log(
+        "Português:",
+        portugues?.topics.find((t) => t.title.includes("Reconhecimento")),
+      );
 
-    const result = await saveStateToSupabase(appState);
+      const result = await saveStateToSupabase(appState);
 
-    console.log("Resultado:", result);
+      console.log("Resultado:", result);
 
-    setCloudStatus(
-      result.ok
-        ? `Salvo no Supabase às ${new Date().toLocaleTimeString("pt-BR")}`
-        : result.source === "local"
-          ? "Supabase não configurado; salvo somente no cache local."
-          : "Falha ao salvar no Supabase; backup local atualizado.",
-    );
-  }, 1500);
+      setCloudStatus(
+        result.ok
+          ? `Salvo no Supabase às ${new Date().toLocaleTimeString("pt-BR")}`
+          : result.source === "local"
+            ? "Supabase não configurado; salvo somente no cache local."
+            : "Falha ao salvar no Supabase; backup local atualizado.",
+      );
+    }, 1500);
 
-  return () => clearTimeout(timeout);
-}, [appState, cloudLoading]);
+    return () => clearTimeout(timeout);
+  }, [appState, cloudLoading]);
 
   const subjectsList = useMemo(
     () =>
@@ -4113,10 +3161,22 @@ export default function App() {
     getSubject(roadmap, errorForm.subjectId)?.topics || [];
   const selectedQuestionSubjectTopics =
     getSubject(roadmap, questionForm.subjectId)?.topics || [];
-  const questionFilterTopics =
-    questionFilterSubject === "all"
-      ? []
-      : getSubject(roadmap, questionFilterSubject)?.topics || [];
+  const questionFilterTopics = (() => {
+    if (questionFilterSubject === "all") return [];
+    const allTopics = getSubject(roadmap, questionFilterSubject)?.topics || [];
+    const topicIdsWithSessions = new Set(
+      questionSessions
+        .filter((s) => s.subjectId === questionFilterSubject)
+        .flatMap((s) =>
+          Array.isArray(s.topicIds) && s.topicIds.length
+            ? s.topicIds
+            : s.topicId
+              ? [s.topicId]
+              : [],
+        ),
+    );
+    return allTopics.filter((t) => topicIdsWithSessions.has(t.id));
+  })();
   const selectedNoteSubjectTopics =
     getSubject(roadmap, noteForm.subjectId)?.topics || [];
   const noteFilterTopics =
@@ -4490,7 +3550,7 @@ export default function App() {
       if (day) day.items.push(item);
     };
     weekDaysForSelectedWeek.forEach((item) =>
-      addItem(item.dayKey, { ...item, origin: `Semana ${item.week}` }),
+      addItem(item.dayKey, { ...item, origin: `Ciclo ${item.week}` }),
     );
     if (!plan.find((entry) => entry.key === "domingo")?.items.length)
       addItem("domingo", {
@@ -4571,8 +3631,9 @@ export default function App() {
       ...item,
       topics: item.topics.filter(
         (topic) =>
-          roadmapStatus === "todos" ||
-          (roadmapStatus === "concluidos" ? topic.done : !topic.done),
+          (roadmapStatus === "todos" ||
+            (roadmapStatus === "concluidos" ? topic.done : !topic.done)) &&
+          (roadmapPriority === "todas" || topic.priority === roadmapPriority),
       ),
     }));
   const weeklyGoalReport = useMemo(() => {
@@ -4615,10 +3676,10 @@ export default function App() {
       : 0;
     const message =
       plannedQuestions === 0
-        ? "Defina uma meta semanal de questões nas Configurações."
+        ? "Defina uma meta de questões do ciclo nas Configurações."
         : missingQuestions === 0
-          ? `Meta semanal batida. Você fez ${doneQuestions} questão(ões), ${extraQuestions > 0 ? `${extraQuestions} acima da meta.` : "exatamente dentro da meta."}`
-          : `Faltam ${missingQuestions} questão(ões) para bater a meta. Ritmo sugerido: ${dailyNeeded} por dia até fechar a semana.`;
+          ? `Meta do ciclo batida. Você fez ${doneQuestions} questão(ões), ${extraQuestions > 0 ? `${extraQuestions} acima da meta.` : "exatamente dentro da meta."}`
+          : `Faltam ${missingQuestions} questão(ões) para bater a meta. Ritmo sugerido: ${dailyNeeded} por dia até fechar o ciclo.`;
     return {
       plannedQuestions,
       doneQuestions,
@@ -5069,7 +4130,7 @@ export default function App() {
   const nav = [
     ["dashboard", Home, "Painel"],
     ["today", CalendarDays, "Estudo do Dia"],
-    ["weekly", CalendarDays, "Planejamento Semanal"],
+    ["weekly", CalendarDays, "Planejamento do Ciclo"],
     ["schedule", Clock, "Cronograma"],
     ["subjects", BookOpen, "Matérias"],
     ["questions", CheckSquare, "Questões"],
@@ -5192,7 +4253,7 @@ export default function App() {
     );
     setPrioritySwap({ missingTopicId: "", replaceItemId: "" });
     setPrioritySwapMessage(
-      `${missingTopic.title} foi priorizado na Semana ${targetItem.week}, ${dayLabel(targetItem.dayKey)}. Ele entrou no lugar de ${targetItem.topic}.`,
+      `${missingTopic.title} foi priorizado na Ciclo ${targetItem.week}, ${dayLabel(targetItem.dayKey)}. Ele entrou no lugar de ${targetItem.topic}.`,
     );
   }
 
@@ -5248,8 +4309,8 @@ export default function App() {
 
     if (subjectsPerDayChanged) {
       openConfirmDialog({
-        title: "Atualizar semana?",
-        message: `Você mudou de ${previousSubjectsPerDay || "-"} para ${nextSubjectsPerDay || "-"} matéria(s) por dia. Deseja atualizar o cronograma semanal agora com essa nova configuração?`,
+        title: "Atualizar ciclo?",
+        message: `Você mudou de ${previousSubjectsPerDay || "-"} para ${nextSubjectsPerDay || "-"} matéria(s) por dia. Deseja atualizar o cronograma do ciclo agora com essa nova configuração?`,
         confirmLabel: "Atualizar",
         cancelLabel: "Agora não",
         tone: "amber",
@@ -5258,7 +4319,7 @@ export default function App() {
     } else if (minutesChanged) {
       openConfirmDialog({
         title: "Recalcular tempos?",
-        message: `Você mudou o tempo diário de ${previousMinutes || "-"} para ${nextMinutes || "-"} minutos. Deseja recalcular o cronograma semanal agora mantendo as mesmas matérias e assuntos?`,
+        message: `Você mudou o tempo diário de ${previousMinutes || "-"} para ${nextMinutes || "-"} minutos. Deseja recalcular o cronograma do ciclo agora mantendo as mesmas matérias e assuntos?`,
         confirmLabel: "Recalcular",
         cancelLabel: "Agora não",
         tone: "amber",
@@ -5315,11 +4376,7 @@ export default function App() {
               : [],
         ),
     );
-    const ordered = sortTopicsByPriority(
-      subjectId,
-      subject.topics || [],
-      questionSessions,
-    );
+    const ordered = sortTopicsForNextCycle(subject, questionSessions);
     return (
       ordered.find(
         (topic) =>
@@ -5440,8 +4497,8 @@ export default function App() {
     setManualScheduleDraft(suggestedManualDraftForWeek(manualScheduleWeek));
     setManualScheduleMessage(
       hasPerformanceData
-        ? `Sugestão criada para a Semana ${manualScheduleWeek} priorizando matérias com menor desempenho, mais erros e menor progresso. O domingo continua fixo.`
-        : `Sugestão criada para a Semana ${manualScheduleWeek} com base nos pesos do edital. Depois que você registrar questões e erros, esse botão passa a priorizar desempenho também. O domingo continua fixo.`,
+        ? `Sugestão criada para a Ciclo ${manualScheduleWeek} priorizando matérias com menor desempenho, mais erros e menor progresso. O domingo continua fixo.`
+        : `Sugestão criada para a Ciclo ${manualScheduleWeek} com base nos pesos do edital. Depois que você registrar questões e erros, esse botão passa a priorizar desempenho também. O domingo continua fixo.`,
     );
   }
 
@@ -5507,7 +4564,7 @@ export default function App() {
         subject: special.subject,
         topic:
           special.id === "planejamento"
-            ? `Gerar e ajustar a Semana ${Number(week) + 1}`
+            ? `Gerar e ajustar o Ciclo ${Number(week) + 1}`
             : special.topic,
         type: special.type,
         minutes: sundayMinutes,
@@ -5554,7 +4611,7 @@ export default function App() {
     });
     setScheduleWeekFilter(Number(manualScheduleWeek));
     setManualScheduleOpen(false);
-    setManualScheduleMessage(`Semana ${manualScheduleWeek} salva manualmente.`);
+    setManualScheduleMessage(`Ciclo ${manualScheduleWeek} salva manualmente.`);
   }
 
   function copyManualWeekToNext() {
@@ -5565,7 +4622,7 @@ export default function App() {
       ...(current || {}),
     }));
     setManualScheduleMessage(
-      `Modelo copiado para a Semana ${nextWeek}. Ajuste o que quiser e salve.`,
+      `Modelo copiado para a Ciclo ${nextWeek}. Ajuste o que quiser e salve.`,
     );
   }
 
@@ -5714,7 +4771,8 @@ export default function App() {
     );
     const missingQuestionsToCarry = Math.max(
       0,
-      Number(dailyQuestionGoalReport.missingQuestions || 0),
+      Number(dailyQuestionGoalReport.missingQuestions || 0) -
+        questionsExcusedToday,
     );
     const nextQuestionCarryovers = (() => {
       const normalized = normalizeQuestionCarryovers(questionCarryovers);
@@ -5776,6 +4834,7 @@ export default function App() {
     setWeeklyDayFilter(targetDayKey);
     setWeeklyWeekFilter(targetWeek);
     setSchedule(nextSchedule);
+    setQuestionsExcusedToday(0);
     setView("today");
   }
 
@@ -5999,6 +5058,8 @@ export default function App() {
       correctQuestions: "",
       errorText: "",
       fixText: "",
+      missingReason: "",
+      showReasonStep: false,
     });
   }
 
@@ -6209,6 +5270,18 @@ export default function App() {
             ],
       );
     }
+    if (
+      completionForm.missingReason === "sem_questoes" &&
+      completionBlock.questionsTarget > 0
+    ) {
+      const excused = Math.max(
+        0,
+        Number(completionBlock.questionsTarget || 0) - total,
+      );
+      if (excused > 0) {
+        setQuestionsExcusedToday((c) => c + excused);
+      }
+    }
     setCompletionBlock(null);
     setCelebration({
       id: uid("celebration"),
@@ -6218,9 +5291,6 @@ export default function App() {
   }
 
   function resetBlock(id) {
-    const block =
-      schedule.find((item) => item.id === id) ||
-      weeklySchedule.find((item) => item.id === id);
     if (!block) return;
 
     openConfirmDialog({
@@ -7047,7 +6117,7 @@ export default function App() {
     }));
   }
 
-  function updateExamTopic(subjectIndex, topicIndex, value) {
+  function updateExamTopic(subjectIndex, topicIndex, field, value) {
     setExamForm((current) => ({
       ...current,
       subjects: current.subjects.map((subject, currentSubjectIndex) =>
@@ -7055,7 +6125,9 @@ export default function App() {
           ? {
               ...subject,
               topics: subject.topics.map((topic, currentTopicIndex) =>
-                currentTopicIndex === topicIndex ? value : topic,
+                currentTopicIndex === topicIndex
+                  ? { ...topic, [field]: value }
+                  : topic,
               ),
             }
           : subject,
@@ -7068,7 +6140,7 @@ export default function App() {
       ...current,
       subjects: [
         ...current.subjects,
-        { subject: "", weight: "3", topics: [""] },
+        { subject: "", weight: "3", topics: [{ text: "", priority: "Média" }] },
       ],
     }));
   }
@@ -7087,7 +6159,10 @@ export default function App() {
       ...current,
       subjects: current.subjects.map((subject, index) =>
         index === subjectIndex
-          ? { ...subject, topics: [...subject.topics, ""] }
+          ? {
+              ...subject,
+              topics: [...subject.topics, { text: "", priority: "Média" }],
+            }
           : subject,
       ),
     }));
@@ -7113,10 +6188,17 @@ export default function App() {
     return form.subjects
       .map((subject, subjectIndex) => {
         const name = String(subject.subject || "").trim();
-        const topics = (subject.topics || [])
-          .map((topic) => String(topic || "").trim())
-          .filter(Boolean);
-        if (!name || topics.length === 0) return null;
+        const rawTopics = (subject.topics || [])
+          .map((topic) =>
+            typeof topic === "object" && topic !== null
+              ? {
+                  text: String(topic.text || "").trim(),
+                  priority: topic.priority || "Média",
+                }
+              : { text: String(topic || "").trim(), priority: "Média" },
+          )
+          .filter((t) => t.text);
+        if (!name || rawTopics.length === 0) return null;
         const subjectId = slugifyExamKey(name) || `materia_${subjectIndex + 1}`;
         return {
           id: subjectId,
@@ -7130,11 +6212,11 @@ export default function App() {
                 : "Baixa",
           status: "Aguardando início",
           reason: "Matéria cadastrada em Novo Edital / Concurso.",
-          topics: topics.map((topic, topicIndex) => ({
+          topics: rawTopics.map((topic, topicIndex) => ({
             id: `${subjectId}_${topicIndex + 1}`,
-            title: topic,
+            title: topic.text,
             done: false,
-            priority: "Média",
+            priority: topic.priority || "Média",
             difficulty: "Média",
           })),
         };
@@ -7827,41 +6909,51 @@ export default function App() {
           blankrows: false,
         });
 
-        const grouped = new Map();
+        const groupedSubjects = new Map();
+        const subjectWeights = new Map();
 
         let currentSubject = "";
+        let currentWeight = "3";
 
         rows.forEach((row, index) => {
-          const first = String(row?.[0] || "").trim();
-          const second = String(row?.[1] || "").trim();
+          const colA = String(row?.[0] || "").trim();
+          const colB = String(row?.[1] || "").trim();
+          const colC = String(row?.[2] || "").trim();
+          const colD = String(row?.[3] || "").trim();
 
-          // Ignora o cabeçalho
-          if (index === 0 && first.toLowerCase().includes("mat")) {
+          if (index === 0 && colA.toLowerCase().includes("mat")) {
             return;
           }
 
-          // Quando houver matéria na primeira coluna,
-          // ela passa a ser a matéria atual.
-          if (first) {
-            currentSubject = first;
-          }
-
-          // Ignora linhas sem matéria ou sem assunto.
-          if (!currentSubject || !second) {
+          if (!colA && !colB && !colC && !colD) {
             return;
           }
 
-          if (!grouped.has(currentSubject)) {
-            grouped.set(currentSubject, []);
+          if (colA) {
+            currentSubject = colA;
+            currentWeight = colB || "3";
+            subjectWeights.set(currentSubject, currentWeight);
           }
 
-          grouped.get(currentSubject).push(second);
+          if (!currentSubject || !colC) {
+            return;
+          }
+
+          if (!groupedSubjects.has(currentSubject)) {
+            groupedSubjects.set(currentSubject, []);
+          }
+
+          const priority = ["Alta", "Média", "Baixa"].includes(colD)
+            ? colD
+            : "Média";
+
+          groupedSubjects.get(currentSubject).push({ text: colC, priority });
         });
 
-        const subjects = Array.from(grouped.entries()).map(
+        const subjects = Array.from(groupedSubjects.entries()).map(
           ([subject, topics]) => ({
             subject,
-            weight: "3",
+            weight: subjectWeights.get(subject) || "3",
             topics,
           }),
         );
@@ -7870,21 +6962,19 @@ export default function App() {
           throw new Error("empty");
         }
 
-        // Preenche o formulário do edital
         setExamForm((current) => ({
           ...current,
           subjects,
         }));
 
-        // Exibe automaticamente o editor de matérias
         setExamCreatorMode("manual");
 
         setExamCreatorMessage(
-          `Arquivo importado com ${subjects.length} matéria(s). Revise os pesos e clique em Salvar.`,
+          `Arquivo importado com ${subjects.length} matéria(s). Revise e clique em Salvar.`,
         );
       } catch {
         setExamCreatorMessage(
-          "Não foi possível importar. Use colunas: Matéria | Assunto.",
+          "Não foi possível importar. Use colunas: Matéria | Peso | Assunto | Prioridade.",
         );
       }
 
@@ -7982,8 +7072,8 @@ export default function App() {
 
   function restartCycleAtWeekOne() {
     openConfirmDialog({
-      title: "Reiniciar ciclo na Semana 1?",
-      message: `O ciclo será reiniciado hoje (${TODAY_LABEL}). O estudo do dia ficará na Semana 1, ${dayLabel(TODAY_DAY_KEY)}. Questões, erros, anotações e revisões não serão apagados.`,
+      title: "Reiniciar ciclo no Ciclo 1?",
+      message: `O ciclo será reiniciado hoje (${TODAY_LABEL}). O estudo do dia ficará no Ciclo 1, ${dayLabel(TODAY_DAY_KEY)}. Questões, erros, anotações e revisões não serão apagados.`,
       confirmLabel: "Sim",
       cancelLabel: "Não",
       tone: "amber",
@@ -8505,6 +7595,47 @@ export default function App() {
                 title="Painel geral"
                 subtitle="Resumo do que importa para decidir o próximo estudo sem perder tempo."
               />
+              {roadmap.length === 0 && (
+                <Card className="border-amber-200 bg-gradient-to-br from-amber-50 to-stone-50 p-8 text-center">
+                  <div className="mx-auto flex w-fit items-center gap-3 rounded-2xl bg-amber-900 px-4 py-2 text-white">
+                    <FileSpreadsheet size={20} />
+                    <span className="text-xs font-black uppercase tracking-[0.18em]">
+                      Primeiro passo
+                    </span>
+                  </div>
+                  <h2 className="mt-5 text-2xl font-black text-stone-950">
+                    Crie ou importe o seu edital para começar
+                  </h2>
+                  <p className="mx-auto mt-3 max-w-xl text-sm text-stone-600">
+                    O sistema nasce vazio, sem matérias, assuntos ou cronograma.
+                    Para iniciar seus estudos, cadastre o edital do seu concurso
+                    manualmente ou importe a partir de uma planilha.
+                  </p>
+                  <div className="mt-6 flex flex-wrap justify-center gap-3">
+                    <button
+                      onClick={() => {
+                        resetExamCreatorForm();
+                        setExamCreatorOpen(true);
+                        setView("exam-switch");
+                      }}
+                      className="rounded-2xl bg-stone-950 px-6 py-3 font-bold text-white hover:bg-stone-800"
+                    >
+                      <Plus size={18} className="inline" /> Cadastrar edital
+                    </button>
+                    <button
+                      onClick={() => {
+                        resetExamCreatorForm();
+                        setExamCreatorMode("arquivo");
+                        setExamCreatorOpen(true);
+                        setView("exam-switch");
+                      }}
+                      className="rounded-2xl border border-stone-300 bg-white px-6 py-3 font-bold text-stone-800 hover:bg-stone-50"
+                    >
+                      <Upload size={18} className="inline" /> Importar planilha
+                    </button>
+                  </div>
+                </Card>
+              )}
               {examCountdown.daysLeft !== null && (
                 <Card
                   className={cls(
@@ -8540,281 +7671,289 @@ export default function App() {
                   </div>
                 </Card>
               )}
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-                <Stat
-                  icon={Target}
-                  title="Progresso"
-                  value={`${stats.progress}%`}
-                  hint={`${roadmapStats.done} concluído(s) de ${roadmapStats.total} assunto(s)`}
-                />
-                <Stat
-                  icon={CheckSquare}
-                  title="Questões"
-                  value={stats.questionsDone}
-                  hint="total geral de questões"
-                />
-                <Card className="p-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-semibold text-stone-500">
-                        Acertos/erros
-                      </p>
-                      <div className="mt-2 grid grid-cols-2 gap-1.5">
-                        <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-2 py-2 text-center">
-                          <p className="text-xl font-black leading-none text-emerald-700">
-                            {stats.questionsCorrect}
-                          </p>
-                          <p className="mt-1 text-[9px] font-bold uppercase leading-none tracking-normal text-emerald-700">
-                            acertos
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-red-100 bg-red-50 px-2 py-2 text-center">
-                          <p className="text-xl font-black leading-none text-red-700">
-                            {stats.questionsWrong}
-                          </p>
-                          <p className="mt-1 text-[9px] font-bold uppercase leading-none tracking-normal text-red-700">
-                            erros
-                          </p>
-                        </div>
-                      </div>
-                      <p className="mt-2 whitespace-nowrap text-[11px] font-semibold text-stone-500">
-                        Aproveitamento: {stats.accuracy}%
-                      </p>
-                    </div>
-                    <div className="rounded-xl bg-stone-950 p-2 text-white">
-                      <CheckCircle2 size={16} />
-                    </div>
-                  </div>
-                </Card>
-                <Stat
-                  icon={Clock}
-                  title="Horas"
-                  value={formatHours(stats.studiedSeconds)}
-                  hint="tempo geral estudado até agora"
-                />
-                <Stat
-                  icon={Flame}
-                  title="Revisões"
-                  value={reviews.length}
-                  hint="geradas automaticamente"
-                />
-              </div>
-              <div className="grid gap-6 xl:grid-cols-[1.15fr_.85fr]">
-                <Card className="p-5">
-                  <div className="flex items-center justify-between gap-3">
-                    <SectionTitle
-                      icon={Zap}
-                      title="O que estudar agora"
-                      subtitle="Ordem adaptativa com base em peso, desempenho e pendências."
+              {roadmap.length > 0 && (
+                <div className="space-y-6">
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                    <Stat
+                      icon={Target}
+                      title="Progresso"
+                      value={`${stats.progress}%`}
+                      hint={`${roadmapStats.done} concluído(s) de ${roadmapStats.total} assunto(s)`}
                     />
-                    <Badge tone="amber">Aguardando desempenho</Badge>
-                  </div>
-                  <div className="mt-5 space-y-3">
-                    {dashboardStudyItems.length === 0 ? (
-                      <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
-                        Todos os blocos de estudo de hoje foram concluídos.
+                    <Stat
+                      icon={CheckSquare}
+                      title="Questões"
+                      value={stats.questionsDone}
+                      hint="total geral de questões"
+                    />
+                    <Card className="p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-semibold text-stone-500">
+                            Acertos/erros
+                          </p>
+                          <div className="mt-2 grid grid-cols-2 gap-1.5">
+                            <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-2 py-2 text-center">
+                              <p className="text-xl font-black leading-none text-emerald-700">
+                                {stats.questionsCorrect}
+                              </p>
+                              <p className="mt-1 text-[9px] font-bold uppercase leading-none tracking-normal text-emerald-700">
+                                acertos
+                              </p>
+                            </div>
+                            <div className="rounded-xl border border-red-100 bg-red-50 px-2 py-2 text-center">
+                              <p className="text-xl font-black leading-none text-red-700">
+                                {stats.questionsWrong}
+                              </p>
+                              <p className="mt-1 text-[9px] font-bold uppercase leading-none tracking-normal text-red-700">
+                                erros
+                              </p>
+                            </div>
+                          </div>
+                          <p className="mt-2 whitespace-nowrap text-[11px] font-semibold text-stone-500">
+                            Aproveitamento: {stats.accuracy}%
+                          </p>
+                        </div>
+                        <div className="rounded-xl bg-stone-950 p-2 text-white">
+                          <CheckCircle2 size={16} />
+                        </div>
                       </div>
-                    ) : (
-                      dashboardStudyItems.map((item) => (
+                    </Card>
+                    <Stat
+                      icon={Clock}
+                      title="Horas"
+                      value={formatHours(stats.studiedSeconds)}
+                      hint="tempo geral estudado até agora"
+                    />
+                    <Stat
+                      icon={Flame}
+                      title="Revisões"
+                      value={reviews.length}
+                      hint="geradas automaticamente"
+                    />
+                  </div>
+                  <div className="grid gap-6 xl:grid-cols-[1.15fr_.85fr]">
+                    <Card className="p-5">
+                      <div className="flex items-center justify-between gap-3">
+                        <SectionTitle
+                          icon={Zap}
+                          title="O que estudar agora"
+                          subtitle="Ordem adaptativa com base em peso, desempenho e pendências."
+                        />
+                        <Badge tone="amber">Aguardando desempenho</Badge>
+                      </div>
+                      <div className="mt-5 space-y-3">
+                        {dashboardStudyItems.length === 0 ? (
+                          <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
+                            Todos os blocos de estudo de hoje foram concluídos.
+                          </div>
+                        ) : (
+                          dashboardStudyItems.map((item) => (
+                            <div
+                              key={item.id}
+                              className={cls(
+                                "rounded-3xl border p-4 transition",
+                                item.carryover
+                                  ? "border-red-200 bg-red-50"
+                                  : "border-stone-200 bg-stone-50/70",
+                              )}
+                            >
+                              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                <div>
+                                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-400">
+                                    {item.type} • {planAmountLabel(item)}
+                                  </p>
+                                  <h3 className="mt-1 font-black text-stone-950">
+                                    {item.subject}
+                                  </h3>
+                                  <p className="text-sm text-stone-500">
+                                    Assunto do dia: {item.topic}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Badge
+                                    tone={
+                                      item.status === "concluido"
+                                        ? "green"
+                                        : item.status === "andamento"
+                                          ? "amber"
+                                          : item.carryover
+                                            ? "red"
+                                            : "stone"
+                                    }
+                                  >
+                                    {item.status === "concluido"
+                                      ? "concluído"
+                                      : item.carryover
+                                        ? "pendente do dia anterior"
+                                        : item.status}
+                                  </Badge>
+                                  <span className="rounded-2xl bg-white px-3 py-2 font-mono text-sm text-stone-700">
+                                    {formatElapsed(item.elapsedSeconds)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </Card>
+                    <Card className="p-5">
+                      <SectionTitle
+                        icon={AlertTriangle}
+                        title="Alertas inteligentes"
+                        subtitle="Pendências que podem atrapalhar sua evolução."
+                      />
+                      <div className="mt-5 space-y-3">
+                        {overdueStudyItems.length > 0 && (
+                          <div className="rounded-3xl border-2 border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                            <b>Pendentes do dia anterior:</b>{" "}
+                            {overdueStudyItems.length} pendente(s) de{" "}
+                            {overdueStudyItems[0].carryoverFrom}. Priorize antes
+                            do estudo normal do dia.
+                          </div>
+                        )}
+                        {overdueReviews.length > 0 && (
+                          <div className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                            <b>Revisões vencidas:</b>
+                            <div className="mt-3 space-y-2">
+                              {overdueReviews.slice(0, 4).map((review) => (
+                                <div
+                                  key={review.id}
+                                  className="rounded-2xl bg-white/70 px-3 py-2"
+                                >
+                                  <p className="font-black">{review.title}</p>
+                                  <p className="text-xs font-semibold">
+                                    {review.type} • {review.date}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                            {overdueReviews.length > 4 && (
+                              <p className="mt-2 text-xs font-bold">
+                                +{overdueReviews.length - 4} revisão(ões)
+                                vencida(s)
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {todayReviews.length > 0 && (
+                          <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <b>Revisões de hoje</b>
+                              <Badge tone="amber">
+                                {todayReviews.length} hoje
+                              </Badge>
+                            </div>
+                            <div className="mt-3 space-y-2">
+                              {todayReviews.slice(0, 5).map((review) => (
+                                <div
+                                  key={review.id}
+                                  className="rounded-2xl bg-white/80 px-3 py-2"
+                                >
+                                  <p className="font-black">{review.title}</p>
+                                  <p className="text-xs font-semibold">
+                                    {review.type} • {review.date}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                            {todayReviews.length > 5 && (
+                              <p className="mt-2 text-xs font-bold">
+                                +{todayReviews.length - 5} revisão(ões) de hoje
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {completedTodayReviews.length > 0 && (
+                          <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-800">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <b>Revisões de hoje concluídas</b>
+                              <Badge tone="green">
+                                {completedTodayReviews.length} concluída(s)
+                              </Badge>
+                            </div>
+                            <p className="mt-2 text-xs font-semibold">
+                              As revisões de hoje já foram feitas. Abaixo
+                              aparece apenas a próxima revisão futura.
+                            </p>
+                          </div>
+                        )}
+                        {overdueReviews.length === 0 &&
+                          todayReviews.length === 0 &&
+                          nextPendingReview && (
+                            <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <b>Próxima revisão</b>
+                              </div>
+                              <div className="mt-3 rounded-2xl bg-white/80 px-3 py-2">
+                                <p className="font-black">
+                                  {nextPendingReview.title}
+                                </p>
+                                <p className="text-xs font-semibold">
+                                  {nextPendingReview.type} •{" "}
+                                  {nextPendingReview.date}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        {overdueReviews.length === 0 &&
+                          todayReviews.length === 0 &&
+                          !nextPendingReview && (
+                            <div className="rounded-3xl border border-stone-200 bg-stone-50 p-4 text-sm text-stone-700">
+                              <b>Sistema zerado:</b> comece pelo primeiro bloco
+                              do Estudo do Dia.
+                            </div>
+                          )}
                         <div
-                          key={item.id}
                           className={cls(
-                            "rounded-3xl border p-4 transition",
-                            item.carryover
-                              ? "border-red-200 bg-red-50"
-                              : "border-stone-200 bg-stone-50/70",
+                            "rounded-3xl border p-4 text-sm",
+                            dailyQuestionGoalReport.missingQuestions === 0 &&
+                              dailyQuestionGoalReport.plannedQuestions > 0
+                              ? "border-emerald-100 bg-emerald-50 text-emerald-800"
+                              : "border-amber-200 bg-amber-50 text-amber-900",
                           )}
                         >
-                          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                            <div>
-                              <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-400">
-                                {item.type} • {planAmountLabel(item)}
-                              </p>
-                              <h3 className="mt-1 font-black text-stone-950">
-                                {item.subject}
-                              </h3>
-                              <p className="text-sm text-stone-500">
-                                Assunto do dia: {item.topic}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Badge
-                                tone={
-                                  item.status === "concluido"
-                                    ? "green"
-                                    : item.status === "andamento"
-                                      ? "amber"
-                                      : item.carryover
-                                        ? "red"
-                                        : "stone"
-                                }
-                              >
-                                {item.status === "concluido"
-                                  ? "concluído"
-                                  : item.carryover
-                                    ? "pendente do dia anterior"
-                                    : item.status}
-                              </Badge>
-                              <span className="rounded-2xl bg-white px-3 py-2 font-mono text-sm text-stone-700">
-                                {formatElapsed(item.elapsedSeconds)}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </Card>
-                <Card className="p-5">
-                  <SectionTitle
-                    icon={AlertTriangle}
-                    title="Alertas inteligentes"
-                    subtitle="Pendências que podem atrapalhar sua evolução."
-                  />
-                  <div className="mt-5 space-y-3">
-                    {overdueStudyItems.length > 0 && (
-                      <div className="rounded-3xl border-2 border-red-200 bg-red-50 p-4 text-sm text-red-800">
-                        <b>Pendentes do dia anterior:</b>{" "}
-                        {overdueStudyItems.length} pendente(s) de{" "}
-                        {overdueStudyItems[0].carryoverFrom}. Priorize antes do
-                        estudo normal do dia.
-                      </div>
-                    )}
-                    {overdueReviews.length > 0 && (
-                      <div className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-                        <b>Revisões vencidas:</b>
-                        <div className="mt-3 space-y-2">
-                          {overdueReviews.slice(0, 4).map((review) => (
-                            <div
-                              key={review.id}
-                              className="rounded-2xl bg-white/70 px-3 py-2"
-                            >
-                              <p className="font-black">{review.title}</p>
-                              <p className="text-xs font-semibold">
-                                {review.type} • {review.date}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                        {overdueReviews.length > 4 && (
-                          <p className="mt-2 text-xs font-bold">
-                            +{overdueReviews.length - 4} revisão(ões) vencida(s)
-                          </p>
-                        )}
-                      </div>
-                    )}
-                    {todayReviews.length > 0 && (
-                      <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <b>Revisões de hoje</b>
-                          <Badge tone="amber">{todayReviews.length} hoje</Badge>
-                        </div>
-                        <div className="mt-3 space-y-2">
-                          {todayReviews.slice(0, 5).map((review) => (
-                            <div
-                              key={review.id}
-                              className="rounded-2xl bg-white/80 px-3 py-2"
-                            >
-                              <p className="font-black">{review.title}</p>
-                              <p className="text-xs font-semibold">
-                                {review.type} • {review.date}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                        {todayReviews.length > 5 && (
-                          <p className="mt-2 text-xs font-bold">
-                            +{todayReviews.length - 5} revisão(ões) de hoje
-                          </p>
-                        )}
-                      </div>
-                    )}
-                    {completedTodayReviews.length > 0 && (
-                      <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-800">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <b>Revisões de hoje concluídas</b>
-                          <Badge tone="green">
-                            {completedTodayReviews.length} concluída(s)
-                          </Badge>
-                        </div>
-                        <p className="mt-2 text-xs font-semibold">
-                          As revisões de hoje já foram feitas. Abaixo aparece
-                          apenas a próxima revisão futura.
-                        </p>
-                      </div>
-                    )}
-                    {overdueReviews.length === 0 &&
-                      todayReviews.length === 0 &&
-                      nextPendingReview && (
-                        <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                           <div className="flex flex-wrap items-center justify-between gap-2">
-                            <b>Próxima revisão</b>
+                            <b>Meta de questões de hoje</b>
+                            <Badge
+                              tone={
+                                dailyQuestionGoalReport.missingQuestions ===
+                                  0 &&
+                                dailyQuestionGoalReport.plannedQuestions > 0
+                                  ? "green"
+                                  : "amber"
+                              }
+                            >
+                              {dailyQuestionGoalReport.percent}%
+                            </Badge>
                           </div>
-                          <div className="mt-3 rounded-2xl bg-white/80 px-3 py-2">
-                            <p className="font-black">
-                              {nextPendingReview.title}
-                            </p>
-                            <p className="text-xs font-semibold">
-                              {nextPendingReview.type} •{" "}
-                              {nextPendingReview.date}
-                            </p>
+                          <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                            <div className="rounded-2xl bg-white/80 p-3">
+                              <p className="text-xs font-semibold">Meta</p>
+                              <p className="text-xl font-black">
+                                {dailyQuestionGoalReport.plannedQuestions}
+                              </p>
+                            </div>
+                            <div className="rounded-2xl bg-white/80 p-3">
+                              <p className="text-xs font-semibold">Feitas</p>
+                              <p className="text-xl font-black">
+                                {dailyQuestionGoalReport.doneQuestions}
+                              </p>
+                            </div>
+                            <div className="rounded-2xl bg-white/80 p-3">
+                              <p className="text-xs font-semibold">Faltam</p>
+                              <p className="text-xl font-black">
+                                {dailyQuestionGoalReport.missingQuestions}
+                              </p>
+                            </div>
                           </div>
-                        </div>
-                      )}
-                    {overdueReviews.length === 0 &&
-                      todayReviews.length === 0 &&
-                      !nextPendingReview && (
-                        <div className="rounded-3xl border border-stone-200 bg-stone-50 p-4 text-sm text-stone-700">
-                          <b>Sistema zerado:</b> comece pelo primeiro bloco do
-                          Estudo do Dia.
-                        </div>
-                      )}
-                    <div
-                      className={cls(
-                        "rounded-3xl border p-4 text-sm",
-                        dailyQuestionGoalReport.missingQuestions === 0 &&
-                          dailyQuestionGoalReport.plannedQuestions > 0
-                          ? "border-emerald-100 bg-emerald-50 text-emerald-800"
-                          : "border-amber-200 bg-amber-50 text-amber-900",
-                      )}
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <b>Meta de questões de hoje</b>
-                        <Badge
-                          tone={
-                            dailyQuestionGoalReport.missingQuestions === 0 &&
-                            dailyQuestionGoalReport.plannedQuestions > 0
-                              ? "green"
-                              : "amber"
-                          }
-                        >
-                          {dailyQuestionGoalReport.percent}%
-                        </Badge>
-                      </div>
-                      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                        <div className="rounded-2xl bg-white/80 p-3">
-                          <p className="text-xs font-semibold">Meta</p>
-                          <p className="text-xl font-black">
-                            {dailyQuestionGoalReport.plannedQuestions}
-                          </p>
-                        </div>
-                        <div className="rounded-2xl bg-white/80 p-3">
-                          <p className="text-xs font-semibold">Feitas</p>
-                          <p className="text-xl font-black">
-                            {dailyQuestionGoalReport.doneQuestions}
-                          </p>
-                        </div>
-                        <div className="rounded-2xl bg-white/80 p-3">
-                          <p className="text-xs font-semibold">Faltam</p>
-                          <p className="text-xl font-black">
-                            {dailyQuestionGoalReport.missingQuestions}
-                          </p>
                         </div>
                       </div>
-                    </div>
+                    </Card>
                   </div>
-                </Card>
-              </div>
+                </div>
+              )}
             </motion.section>
           )}
           {view === "today" && (
@@ -8825,7 +7964,7 @@ export default function App() {
             >
               <SectionTitle
                 icon={CalendarDays}
-                title={`Estudo do Dia • ${dayLabel(currentStudyDayKey)} • Semana ${currentStudyWeek}`}
+                title={`Estudo do Dia • ${dayLabel(currentStudyDayKey)} • Ciclo ${currentStudyWeek}`}
                 subtitle="Iniciar roda o cronômetro do bloco; concluir abre o registro final do assunto."
               />
               <Card className="p-4">
@@ -8911,7 +8050,7 @@ export default function App() {
                         )}
                         {item.carryover && item.status === "concluido" && (
                           <p className="mt-2 rounded-2xl bg-white/80 px-4 py-2 text-sm font-bold text-emerald-700">
-                            Pendência resolvida nesta semana.
+                            Pendência resolvida neste ciclo.
                           </p>
                         )}
                         {item.completedFromCarryover && (
@@ -8996,8 +8135,8 @@ export default function App() {
             >
               <SectionTitle
                 icon={CalendarDays}
-                title="Planejamento Semanal"
-                subtitle="Veja o ciclo por semana e por dia, com matérias e assuntos planejados."
+                title="Planejamento do Ciclo"
+                subtitle="Veja o cronograma por ciclo e por dia, com matérias e assuntos planejados."
               />
               <Card className="p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -9026,7 +8165,7 @@ export default function App() {
                   >
                     {WEEK_NUMBERS.map((week) => (
                       <option key={week} value={week}>
-                        Semana {week}
+                        Ciclo {week}
                       </option>
                     ))}
                   </select>
@@ -9035,7 +8174,7 @@ export default function App() {
               <div className="grid gap-4 md:grid-cols-3">
                 <Stat
                   icon={CalendarDays}
-                  title="Semana/Dia"
+                  title="Ciclo/Dia"
                   value={`S${weeklyWeekFilter} • ${selectedWeeklyDay.label}`}
                   hint="filtro atual"
                 />
@@ -9060,7 +8199,7 @@ export default function App() {
                 {selectedWeeklyDay.items.length === 0 ? (
                   <Card className="p-6 text-center text-sm text-stone-500">
                     Nenhum bloco planejado para {selectedWeeklyDay.label} na
-                    semana {weeklyWeekFilter}. Gere a semana na aba Cronograma.
+                    ciclo {weeklyWeekFilter}. Gere o ciclo na aba Cronograma.
                   </Card>
                 ) : (
                   selectedWeeklyDay.items.map((item) => (
@@ -9121,7 +8260,7 @@ export default function App() {
                           )}
                           {item.carryover && item.status === "concluido" && (
                             <p className="mt-2 rounded-2xl bg-white/80 px-4 py-2 text-sm font-bold text-emerald-700">
-                              Atraso resolvido nesta semana.
+                              Atraso resolvido neste ciclo.
                             </p>
                           )}
                           {item.completedFromCarryover && (
@@ -9156,14 +8295,14 @@ export default function App() {
               <SectionTitle
                 icon={Clock}
                 title="Cronograma"
-                subtitle="Cronograma de 12 semanas gerado automaticamente, sem repetir assuntos antes de fechar o ciclo da matéria."
+                subtitle="Cronograma de 12 ciclos gerado automaticamente, sem repetir assuntos antes de fechar o ciclo da matéria."
               />
               <Card className="p-4">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <h3 className="font-black">Semana do cronograma</h3>
+                    <h3 className="font-black">Ciclo do cronograma</h3>
                     <p className="text-sm text-stone-500">
-                      Escolha a semana que deseja gerar ou visualizar.
+                      Escolha o ciclo que deseja gerar ou visualizar.
                     </p>
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row">
@@ -9178,10 +8317,10 @@ export default function App() {
                       }
                       className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold"
                     >
-                      <option value="all">Todas as semanas</option>
+                      <option value="all">Todos os ciclos</option>
                       {WEEK_NUMBERS.map((week) => (
                         <option key={week} value={week}>
-                          Semana {week}
+                          Ciclo {week}
                         </option>
                       ))}
                     </select>
@@ -9232,14 +8371,14 @@ export default function App() {
                 <div className="border-b border-stone-200 bg-white p-5">
                   <SectionTitle
                     icon={CalendarDays}
-                    title="Tabela semanal do cronograma"
+                    title="Tabela do ciclo no cronograma"
                     subtitle="Visão rápida dos assuntos por dia."
                   />
                   <div className="mt-3 flex flex-wrap gap-2">
                     <p className="w-full text-sm font-semibold text-stone-500">
                       {scheduleWeekFilter === "all"
-                        ? `Mostrando a semana atual do ciclo: Semana ${effectiveCycleWeek}`
-                        : `Mostrando a Semana ${scheduleWeekFilter}`}
+                        ? `Mostrando o ciclo atual: Ciclo ${effectiveCycleWeek}`
+                        : `Mostrando a Ciclo ${scheduleWeekFilter}`}
                     </p>
                     <button
                       onClick={() =>
@@ -9270,7 +8409,7 @@ export default function App() {
                       }}
                       className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-950"
                     >
-                      Sugerir próxima semana
+                      Sugerir próximo ciclo
                     </button>
                   </div>
                 </div>
@@ -9383,7 +8522,7 @@ export default function App() {
                       <SectionTitle
                         icon={Edit3}
                         title="Editar cronograma manual"
-                        subtitle={`Semana ${manualScheduleWeek}: escolha somente as matérias de segunda a sábado. Os assuntos são gerados automaticamente e o domingo fica fixo.`}
+                        subtitle={`Ciclo ${manualScheduleWeek}: escolha somente as matérias de segunda a sábado. Os assuntos são gerados automaticamente e o domingo fica fixo.`}
                       />
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -9399,7 +8538,7 @@ export default function App() {
                       >
                         {WEEK_NUMBERS.map((week) => (
                           <option key={week} value={week}>
-                            Semana {week}
+                            Ciclo {week}
                           </option>
                         ))}
                       </select>
@@ -9427,7 +8566,7 @@ export default function App() {
                           </p>
                           <p className="mt-1 text-xs font-semibold text-stone-600">
                             {special.id === "planejamento"
-                              ? `Gerar e ajustar a Semana ${Number(manualScheduleWeek) + 1}`
+                              ? `Gerar e ajustar o Ciclo ${Number(manualScheduleWeek) + 1}`
                               : special.topic}
                           </p>
                         </div>
@@ -9517,7 +8656,7 @@ export default function App() {
                       onClick={copyManualWeekToNext}
                       className="rounded-2xl border border-stone-200 bg-white px-5 py-3 text-sm font-bold text-stone-700"
                     >
-                      Copiar para próxima semana
+                      Copiar para o próximo ciclo
                     </button>
                     <button
                       onClick={() => setManualScheduleOpen(false)}
@@ -9542,8 +8681,8 @@ export default function App() {
                     title="Frequência por matéria"
                     subtitle={
                       scheduleWeekFilter === "all"
-                        ? "Veja quantas vezes cada matéria aparece nas 12 semanas."
-                        : "Veja quantas vezes cada matéria aparece na semana selecionada."
+                        ? "Veja quantas vezes cada matéria aparece nos 12 ciclos."
+                        : "Veja quantas vezes cada matéria aparece no ciclo selecionado."
                     }
                   />
                   <div className="mt-5 space-y-4">
@@ -9571,7 +8710,7 @@ export default function App() {
                               </Badge>
                               <Badge>
                                 {selectedScheduleSubjectFrequency.count} vez(es)
-                                na semana
+                                no ciclo
                               </Badge>
                             </div>
                             <h3 className="mt-3 text-xl font-black text-stone-950">
@@ -9579,8 +8718,8 @@ export default function App() {
                             </h3>
                             <p className="text-sm text-amber-900">
                               {scheduleWeekFilter === "all"
-                                ? "Todas as semanas"
-                                : `Semana ${scheduleWeekFilter}`}
+                                ? "Todos os ciclos"
+                                : `Ciclo ${scheduleWeekFilter}`}
                             </p>
                           </div>
                           <p className="text-4xl font-black text-amber-950">
@@ -9631,8 +8770,8 @@ export default function App() {
                               ),
                               selectedScheduleSubjectFrequency.items,
                               scheduleWeekFilter === "all"
-                                ? "nas 12 semanas"
-                                : `na semana ${scheduleWeekFilter}`,
+                                ? "nos 12 ciclos"
+                                : `no ciclo ${scheduleWeekFilter}`,
                             )}
                           </p>
                         </div>
@@ -9684,7 +8823,7 @@ export default function App() {
                                         <div>
                                           <div className="flex flex-wrap gap-2">
                                             <Badge tone="red">
-                                              fora das 12 semanas
+                                              fora dos 12 ciclos
                                             </Badge>
                                             <Badge>{topic.priority}</Badge>
                                             <Badge>{topic.difficulty}</Badge>
@@ -9733,7 +8872,7 @@ export default function App() {
                                                   key={item.id}
                                                   value={item.id}
                                                 >
-                                                  Semana {item.week} •{" "}
+                                                  Ciclo {item.week} •{" "}
                                                   {dayLabel(item.dayKey)} •{" "}
                                                   {item.topic}
                                                 </option>
@@ -9783,7 +8922,7 @@ export default function App() {
                           {selectedScheduleSubjectFrequency.items.length ===
                           0 ? (
                             <div className="rounded-2xl bg-white/70 p-4 text-sm text-stone-500">
-                              Essa matéria não aparece nesta semana.
+                              Essa matéria não aparece neste ciclo.
                             </div>
                           ) : (
                             selectedScheduleSubjectFrequency.items.map(
@@ -9857,8 +8996,8 @@ export default function App() {
                     title="Cronograma gerado"
                     subtitle={
                       scheduleWeekFilter === "all"
-                        ? "Veja todos os blocos planejados nas 12 semanas."
-                        : "Veja todos os blocos planejados para a semana selecionada."
+                        ? "Veja todos os blocos planejados nos 12 ciclos."
+                        : "Veja todos os blocos planejados para o ciclo selecionado."
                     }
                   />
                   <div className="mt-4 grid gap-3">
@@ -9872,8 +9011,8 @@ export default function App() {
                       <div className="rounded-2xl bg-stone-50 p-5 text-sm text-stone-500">
                         Nenhum cronograma gerado para{" "}
                         {scheduleWeekFilter === "all"
-                          ? "as 12 semanas"
-                          : `a semana ${scheduleWeekFilter}`}
+                          ? "os 12 ciclos"
+                          : `o ciclo ${scheduleWeekFilter}`}
                         .
                       </div>
                     ) : (
@@ -9950,7 +9089,7 @@ export default function App() {
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
                     <h3 className="font-black">
-                      Gerar cronograma de 12 semanas
+                      Gerar cronograma de 12 ciclos
                     </h3>
                     <p className="text-sm text-stone-500">
                       A geração usa peso, cobertura de matérias, assuntos ainda
@@ -9961,7 +9100,7 @@ export default function App() {
                     onClick={generateWeeklySchedule}
                     className="rounded-2xl bg-stone-950 px-5 py-3 font-semibold text-white"
                   >
-                    <Zap size={16} className="inline" /> Gerar 12 semanas
+                    <Zap size={16} className="inline" /> Gerar 12 ciclos
                   </button>
                 </div>
               </Card>
@@ -10005,7 +9144,7 @@ export default function App() {
                 />
               </div>
               <Card className="p-5">
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-3 md:grid-cols-3">
                   <select
                     value={roadmapSubject}
                     onChange={(event) => setRoadmapSubject(event.target.value)}
@@ -10026,6 +9165,16 @@ export default function App() {
                     <option value="todos">Todos os assuntos</option>
                     <option value="pendentes">Pendentes</option>
                     <option value="concluidos">Concluídos</option>
+                  </select>
+                  <select
+                    value={roadmapPriority}
+                    onChange={(event) => setRoadmapPriority(event.target.value)}
+                    className="rounded-2xl border border-stone-200 px-4 py-3 text-sm"
+                  >
+                    <option value="todas">Todas as prioridades</option>
+                    <option value="Alta">Alta</option>
+                    <option value="Média">Média</option>
+                    <option value="Baixa">Baixa</option>
                   </select>
                 </div>
               </Card>
@@ -12363,31 +11512,61 @@ export default function App() {
                               </button>
                             </div>
                             <div className="space-y-2">
-                              {subject.topics.map((topic, topicIndex) => (
-                                <div key={topicIndex} className="flex gap-2">
-                                  <input
-                                    value={topic}
-                                    onChange={(event) =>
-                                      updateExamTopic(
-                                        subjectIndex,
-                                        topicIndex,
-                                        event.target.value,
-                                      )
-                                    }
-                                    className="w-full rounded-2xl border border-stone-200 px-4 py-3"
-                                    placeholder={`Assunto ${topicIndex + 1}`}
-                                  />
-                                  <button
-                                    onClick={() =>
-                                      removeExamTopic(subjectIndex, topicIndex)
-                                    }
-                                    disabled={subject.topics.length === 1}
-                                    className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-red-700 disabled:opacity-40"
-                                  >
-                                    <Trash2 size={16} />
-                                  </button>
-                                </div>
-                              ))}
+                              {subject.topics.map((topic, topicIndex) => {
+                                const topicText =
+                                  typeof topic === "object"
+                                    ? topic.text || ""
+                                    : String(topic || "");
+                                const topicPriority =
+                                  typeof topic === "object"
+                                    ? topic.priority || "Média"
+                                    : "Média";
+                                return (
+                                  <div key={topicIndex} className="flex gap-2">
+                                    <input
+                                      value={topicText}
+                                      onChange={(event) =>
+                                        updateExamTopic(
+                                          subjectIndex,
+                                          topicIndex,
+                                          "text",
+                                          event.target.value,
+                                        )
+                                      }
+                                      className="w-full rounded-2xl border border-stone-200 px-4 py-3"
+                                      placeholder={`Assunto ${topicIndex + 1}`}
+                                    />
+                                    <select
+                                      value={topicPriority}
+                                      onChange={(event) =>
+                                        updateExamTopic(
+                                          subjectIndex,
+                                          topicIndex,
+                                          "priority",
+                                          event.target.value,
+                                        )
+                                      }
+                                      className="rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-700"
+                                    >
+                                      <option value="Alta">Alta</option>
+                                      <option value="Média">Média</option>
+                                      <option value="Baixa">Baixa</option>
+                                    </select>
+                                    <button
+                                      onClick={() =>
+                                        removeExamTopic(
+                                          subjectIndex,
+                                          topicIndex,
+                                        )
+                                      }
+                                      disabled={subject.topics.length === 1}
+                                      className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-red-700 disabled:opacity-40"
+                                    >
+                                      <Trash2 size={16} />
+                                    </button>
+                                  </div>
+                                );
+                              })}
                             </div>
                             <button
                               onClick={() => addExamTopic(subjectIndex)}
@@ -12409,8 +11588,9 @@ export default function App() {
                     ) : (
                       <div className="space-y-3">
                         <div className="rounded-2xl border border-stone-200 bg-white p-4 text-sm text-stone-600">
-                          Formato esperado: coluna A = Matéria, coluna B =
-                          Assunto. A primeira linha pode ser cabeçalho.
+                          Formato esperado: coluna A = Matéria, coluna B = Peso,
+                          coluna C = Assunto, coluna D = Prioridade (Alta /
+                          Média / Baixa). A primeira linha pode ser cabeçalho.
                         </div>
                         <input
                           ref={fileInputRef}
@@ -12499,7 +11679,7 @@ export default function App() {
               <SectionTitle
                 icon={FileText}
                 title="Relatório inteligente"
-                subtitle="Diagnóstico semanal com evolução, gargalos, erros recorrentes e sugestão do próximo estudo."
+                subtitle="Diagnóstico do ciclo com evolução, gargalos, erros recorrentes e sugestão do próximo estudo."
               />
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <Stat
@@ -12530,8 +11710,8 @@ export default function App() {
               <Card className="p-5">
                 <SectionTitle
                   icon={CheckSquare}
-                  title="Relatório semanal de meta"
-                  subtitle="Acompanhe se a meta semanal de questões está sendo cumprida."
+                  title="Relatório de meta do ciclo"
+                  subtitle="Acompanhe se a meta de questões do ciclo está sendo cumprida."
                 />
                 <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                   <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
@@ -12631,7 +11811,7 @@ export default function App() {
                   <SectionTitle
                     icon={CalendarDays}
                     title="Histórico de estudos concluídos"
-                    subtitle="Veja quais matérias e assuntos foram realmente estudados por semana e dia planejado."
+                    subtitle="Veja quais matérias e assuntos foram realmente estudados por ciclo e dia planejado."
                   />
                   <div className="grid gap-2 sm:grid-cols-2">
                     <select
@@ -12643,7 +11823,7 @@ export default function App() {
                     >
                       {WEEK_NUMBERS.map((week) => (
                         <option key={week} value={week}>
-                          Semana {week}
+                          Ciclo {week}
                         </option>
                       ))}
                     </select>
@@ -12678,7 +11858,7 @@ export default function App() {
                           <div>
                             <div className="flex flex-wrap gap-2">
                               <Badge tone="green">concluído</Badge>
-                              <Badge>Semana {item.week}</Badge>
+                              <Badge>Ciclo {item.week}</Badge>
                               <Badge>
                                 {item.dayLabel || dayLabel(item.dayKey)}
                               </Badge>
@@ -12717,7 +11897,7 @@ export default function App() {
                 <Card className="p-5">
                   <SectionTitle
                     icon={BarChart3}
-                    title="Diagnóstico da semana"
+                    title="Diagnóstico do ciclo"
                     subtitle="Leitura automática dos seus dados atuais."
                   />
                   <div className="mt-5 grid gap-3">
@@ -12938,13 +12118,13 @@ export default function App() {
                       type="date"
                     />
                     <p className="mt-2 text-xs font-semibold text-stone-500">
-                      Essa data define a Semana 1. Para reiniciar o ciclo, use o
+                      Essa data define o Ciclo 1. Para reiniciar o ciclo, use o
                       botão no card Sistema.
                     </p>
                   </div>
                   <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3">
                     <label className="text-xs font-bold uppercase tracking-[0.14em] text-stone-500">
-                      Meta semanal de questões
+                      Meta de questões do ciclo
                     </label>
                     <p className="mt-1 text-2xl font-black text-stone-950">
                       {settings.weeklyQuestions}
@@ -12974,7 +12154,7 @@ export default function App() {
                       Salve os parâmetros do ciclo. Ao alterar minutos ou horas
                       por dia, o sistema recalcula os tempos dos blocos já
                       existentes; ao alterar matérias por dia, ele oferece gerar
-                      novamente a semana.
+                      novamente o ciclo.
                     </p>
                   </div>
                   <div className="grid gap-3 md:grid-cols-3">
@@ -13030,7 +12210,7 @@ export default function App() {
                         placeholder="Ex: 50"
                       />
                       <p className="mt-2 text-xs font-semibold text-stone-500">
-                        Ao salvar, a meta semanal vira{" "}
+                        Ao salvar, a meta do ciclo vira{" "}
                         {dailyQuestionTarget(cycleDraftConfig) *
                           STUDY_DAYS.length}{" "}
                         questões.
@@ -13158,9 +12338,9 @@ export default function App() {
                     onClick={restartCycleAtWeekOne}
                     className="w-full rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-left font-semibold text-amber-800"
                   >
-                    Reiniciar ciclo na Semana 1
+                    Reiniciar ciclo no Ciclo 1
                     <span className="mt-1 block text-xs font-semibold text-amber-700">
-                      Mantém seus registros e coloca a Semana 1 no dia atual.
+                      Mantém seus registros e coloca o Ciclo 1 no dia atual.
                     </span>
                   </button>
                   <button
