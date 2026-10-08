@@ -1385,19 +1385,10 @@ function buildTwelveWeekSchedule(
   const subjectUseCount = {};
   const subjectLastWeek = {};
   const subjectLastDayIndex = {};
-  // Na semana atual do ciclo, não gerar tarefas para dias que já passaram.
-  // Os assuntos começam hoje e seguem normalmente nos próximos dias.
-  const currentWeek = currentCycleWeek(
-    SYSTEM_TODAY,
-    settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
-  );
-  const todayDayIndex = WEEK_DAYS.findIndex(([key]) => key === TODAY_DAY_KEY);
 
   for (let week = 1; week <= 12; week += 1) {
     const weeklyUseCount = {};
     STUDY_DAYS.forEach((dayKey, dayIndex) => {
-      if (week === currentWeek && dayIndex < todayDayIndex) return;
-
       const selectedSubjects = [];
       while (selectedSubjects.length < subjectsPerDay) {
         const candidates = roadmap
