@@ -6516,25 +6516,63 @@ export default function App() {
       return setExamCreatorMessage(
         "Informe a data da prova ou marque que ainda não há data definida.",
       );
+
     const roadmap = buildRoadmapFromExamForm(examForm);
     if (!roadmap.length)
       return setExamCreatorMessage(
         "Cadastre pelo menos uma matéria com assunto.",
       );
-    const editing = customExams.find((item) => item.key === editingExamKey);
+
+    const editing = allAvailableExams(customExams, deletedBuiltInExamKeys).find(
+      (item) => item.key === editingExamKey,
+    );
     const key = editing ? editing.key : slugifyExamKey(label);
     const versionSuffix = editing ? Number(editing.revision || 1) + 1 : 1;
     const exam = {
+      ...(editing || {}),
       key,
       label,
-      board: "Personalizado",
-      status: "personalizado",
+      board: editing?.board || "Personalizado",
+      status: editing?.status || "personalizado",
       revision: versionSuffix,
       roadmapVersion: `CUSTOM_${key.toUpperCase()}_V${versionSuffix}`,
       examDate: examForm.noExamDate ? "" : examForm.examDate,
       noExamDate: examForm.noExamDate,
       roadmap,
     };
+
+    // Ao editar, mantém a chave do edital e não recria o ciclo do zero.
+    // Preserva o status de conclusão dos assuntos que continuam existindo.
+    const oldRoadmap =
+      editing && activeExamKeyState === editing.key
+        ? appState.roadmap || editing.roadmap || []
+        : editing?.roadmap || [];
+    const oldTopicsBySubject = new Map(
+      oldRoadmap.map((subject) => [
+        String(subject.subject || subject.id || "").trim().toLowerCase(),
+        new Map(
+          (subject.topics || []).map((topic) => [
+            String(topic.title || topic).trim().toLowerCase(), topic,
+          ]),
+        ),
+      ]),
+    );
+    const roadmapWithProgress = roadmap.map((subject) => {
+      const oldTopics = oldTopicsBySubject.get(
+        String(subject.subject || subject.id || "").trim().toLowerCase(),
+      );
+      return {
+        ...subject,
+        topics: subject.topics.map((topic) => {
+          const oldTopic = oldTopics?.get(String(topic.title || "").trim().toLowerCase());
+          return oldTopic
+            ? { ...topic, ...oldTopic, id: topic.id, title: topic.title }
+            : topic;
+        }),
+      };
+    });
+    exam.roadmap = roadmapWithProgress;
+
     const nextCustomExams = [
       ...customExams.filter((item) => item.key !== key),
       exam,
@@ -6542,39 +6580,93 @@ export default function App() {
     setCustomExams(nextCustomExams);
     setExamCreatorMessage(
       editing
-        ? "Edital atualizado. Salvando ciclo..."
+        ? "Edital atualizado. Preservando o progresso do ciclo..."
         : "Edital criado. Ativando ciclo...",
     );
-    const nextState = createInitialState({
-      ...exam,
-      customExams: nextCustomExams,
-      deletedBuiltInExamKeys,
-    });
-    nextState.settings = {
-      ...nextState.settings,
-      examDate: exam.examDate || "",
-    };
-    nextState.customExam = true;
-    nextState.customExams = nextCustomExams;
-    nextState.deletedBuiltInExamKeys = deletedBuiltInExamKeys;
-    if (editing && activeExamKeyState !== key) {
-      await saveStateToSupabase({
-        ...nextState,
-        activeExamKey: key,
-        storageProfileKey: storageKeyForExam(key),
-      });
-      const currentState = {
+
+    if (editing) {
+      let targetState = null;
+      const isActive = activeExamKeyState === key;
+
+      if (isActive) {
+        targetState = {
+          ...appState,
+          roadmap: roadmapWithProgress,
+          roadmapVersion: exam.roadmapVersion,
+          settings: {
+            ...appState.settings,
+            examDate: exam.examDate || "",
+          },
+          customExam: true,
+          customExams: nextCustomExams,
+          deletedBuiltInExamKeys,
+        };
+      } else {
+        const storageProfileKey = storageKeyForExam(key);
+        if (supabase) {
+          const { data, error } = await supabase
+            .from(SUPABASE_TABLE)
+            .select("state")
+            .eq("device_id", storageProfileKey)
+            .maybeSingle();
+          if (!error && data?.state) targetState = normalizeLoadedState(data.state);
+        }
+        if (!targetState && typeof window !== "undefined") {
+          const cached = localStorage.getItem(localCacheKeyForExam(key));
+          if (cached) {
+            try { targetState = normalizeLoadedState(JSON.parse(cached)); } catch {}
+          }
+        }
+        if (!targetState) {
+          targetState = createInitialState({
+            ...exam,
+            customExams: nextCustomExams,
+            deletedBuiltInExamKeys,
+          });
+        }
+        targetState = {
+          ...targetState,
+          roadmap: roadmapWithProgress,
+          roadmapVersion: exam.roadmapVersion,
+          settings: {
+            ...targetState.settings,
+            examDate: exam.examDate || "",
+          },
+          customExam: true,
+          activeExamKey: key,
+          storageProfileKey,
+          profileKey: USER_PROFILE_KEY,
+          customExams: nextCustomExams,
+          deletedBuiltInExamKeys,
+        };
+      }
+
+      // Salva o cadastro e o estado do edital editado sem trocar o ciclo ativo.
+      await saveStateToSupabase(targetState);
+      if (isActive) applyLoadedState(targetState);
+      else await saveStateToSupabase({
         ...appState,
         customExams: nextCustomExams,
         deletedBuiltInExamKeys,
-      };
-      setCustomExams(nextCustomExams);
-      await saveStateToSupabase(currentState);
+      });
     } else {
+      const nextState = createInitialState({
+        ...exam,
+        customExams: nextCustomExams,
+        deletedBuiltInExamKeys,
+      });
+      nextState.settings = {
+        ...nextState.settings,
+        examDate: exam.examDate || "",
+      };
+      nextState.customExam = true;
+      nextState.customExams = nextCustomExams;
+      nextState.deletedBuiltInExamKeys = deletedBuiltInExamKeys;
       applyLoadedState(nextState);
       await saveStateToSupabase(nextState);
       setView("dashboard");
     }
+
     setExamCreatorOpen(false);
     resetExamCreatorForm();
   }
