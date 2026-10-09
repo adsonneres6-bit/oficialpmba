@@ -7022,31 +7022,66 @@ export default function App() {
     });
   }
 
-  function resetSystemNow() {
+  async function resetSystemNow() {
+    // O reset deve remover também o edital importado/criado e os perfis salvos,
+    // não apenas os registros de progresso.
     const fresh = createInitialState();
-    const preservedSettings = syncWeeklyQuestionsWithDaily(
-      { ...settings },
-      defaultScheduleConfig(),
+    const freshConfig = defaultScheduleConfig();
+    const freshSettings = syncWeeklyQuestionsWithDaily(
+      defaultSettings(),
+      freshConfig,
     );
+    const emptyProfileKey = storageKeyForExam(ACTIVE_EXAM_KEY);
+    const resetState = {
+      ...fresh,
+      view: "dashboard",
+      activeExamKey: ACTIVE_EXAM_KEY,
+      storageProfileKey: emptyProfileKey,
+      customExams: [],
+      deletedBuiltInExamKeys: [],
+      roadmap: [],
+      schedule: [],
+      weeklySchedule: [],
+      errors: [],
+      reviews: [],
+      notes: [],
+      questionSessions: [],
+      simulatedTests: [],
+      questionCarryovers: [],
+      settings: freshSettings,
+      scheduleConfig: freshConfig,
+      currentStudyDayKey: TODAY_DAY_KEY,
+      currentStudyWeek: 1,
+      currentStudyIsoDate: TODAY,
+    };
+
     activeTimerRef.current = null;
     setActiveBlockId(null);
-    setSchedule(fresh.schedule);
-    setWeeklySchedule(fresh.weeklySchedule);
-    setRoadmap(fresh.roadmap);
-    setScheduleConfig(defaultScheduleConfig());
-    setCycleDraftConfig(defaultScheduleConfig());
+
+    setSchedule([]);
+    setWeeklySchedule([]);
+    setRoadmap([]);
+    setScheduleConfig(freshConfig);
+    setCycleDraftConfig(freshConfig);
     setErrors([]);
     setReviews([]);
     setNotes([]);
     setQuestionSessions([]);
     setSimulatedTests([]);
-    setSettings(preservedSettings);
+    setQuestionCarryovers([]);
+    setSettings(freshSettings);
+
+    setCustomExams([]);
+    setDeletedBuiltInExamKeys([]);
+    setActiveExamKeyState(ACTIVE_EXAM_KEY);
+    setStorageProfileKeyState(emptyProfileKey);
+
     setCurrentStudyDayKey(TODAY_DAY_KEY);
-    setCurrentStudyWeek(effectiveCycleWeek);
+    setCurrentStudyWeek(1);
     setView("dashboard");
     setWeeklyDayFilter(TODAY_DAY_KEY);
-    setWeeklyWeekFilter(effectiveCycleWeek);
-    setScheduleWeekFilter(effectiveCycleWeek);
+    setWeeklyWeekFilter(1);
+    setScheduleWeekFilter(1);
     setScheduleDayFilter("all");
     setScheduleSubjectFrequencyFilter("all");
     setRoadmapSubject("all");
@@ -7094,6 +7129,53 @@ export default function App() {
     setImportForm({ subject: "", topics: [""] });
     setImportMessage("");
     setCompletionBlock(null);
+
+    try {
+      if (typeof window !== "undefined") {
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i += 1) {
+          const key = localStorage.key(i);
+          if (
+            key &&
+            (key.startsWith("study_app_state_cache__") ||
+              key.startsWith("study_app_previous_day_question_alert_ack__"))
+          ) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach((key) => localStorage.removeItem(key));
+        localStorage.removeItem(ACTIVE_EXAM_LOCAL_KEY);
+        localStorage.removeItem(LOCAL_CACHE_KEY);
+        localStorage.removeItem(PREVIOUS_DAY_QUESTION_ALERT_ACK_KEY);
+      }
+
+      if (supabase) {
+        // Apaga todos os registros vinculados a este perfil, incluindo o índice
+        // que poderia reativar um edital antigo após F5.
+        const { error: deleteError } = await supabase
+          .from(SUPABASE_TABLE)
+          .delete()
+          .like("device_id", `${USER_PROFILE_KEY}__%`);
+
+        if (deleteError) throw deleteError;
+
+        // Grava um estado vazio explícito para que a hidratação não recupere
+        // um estado antigo caso a tabela fique sem registro para o perfil-base.
+        const saveResult = await saveStateToSupabase(resetState);
+        if (!saveResult.ok) {
+          throw saveResult.error || new Error("Não foi possível salvar o reset.");
+        }
+        setCloudStatus("Sistema resetado. Nenhum edital está ativo.");
+      } else {
+        saveStateToLocalCache(resetState);
+        setCloudStatus("Sistema resetado no armazenamento local.");
+      }
+    } catch (error) {
+      console.error("Erro ao resetar completamente o sistema:", error);
+      setCloudStatus(
+        "Reset local realizado, mas houve falha ao limpar/salvar no Supabase. Verifique o console e as permissões de exclusão.",
+      );
+    }
   }
 
   function restartCycleAtWeekOne() {
