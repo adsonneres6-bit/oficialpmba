@@ -1364,6 +1364,24 @@ function pickNextTopicsForPlan(
   return { finalTopics, usedMinutes };
 }
 
+
+function removeRetroactiveItemsFromCurrentWeek(
+  items,
+  studyStartDate = DEFAULT_STUDY_START_DATE,
+) {
+  const currentWeek = currentCycleWeek(SYSTEM_TODAY, studyStartDate);
+  const todayIndex = WEEK_DAYS.findIndex(([key]) => key === TODAY_DAY_KEY);
+
+  return (Array.isArray(items) ? items : []).filter((item) => {
+    if (Number(item.week) !== Number(currentWeek)) return true;
+    const itemDayIndex = WEEK_DAYS.findIndex(([key]) => key === item.dayKey);
+    // Itens especiais sem índice de dia (por exemplo, simulado de domingo)
+    // não são removidos por esta regra.
+    if (itemDayIndex < 0) return true;
+    return itemDayIndex >= todayIndex;
+  });
+}
+
 function buildTwelveWeekSchedule(
   roadmap,
   scheduleConfig = defaultScheduleConfig(),
@@ -4188,17 +4206,15 @@ export default function App() {
     );
     const todayIndex = WEEK_DAYS.findIndex(([key]) => key === TODAY_DAY_KEY);
 
-    const generated = buildTwelveWeekSchedule(
-      roadmap,
-      targetConfig,
-      settings,
-      questionSessions,
-    ).filter((item) => {
-      if (Number(item.week) !== currentWeek) return true;
-      if (item.dayKey === "domingo") return true;
-      const itemDayIndex = WEEK_DAYS.findIndex(([key]) => key === item.dayKey);
-      return itemDayIndex < 0 || itemDayIndex >= todayIndex;
-    });
+    const generated = removeRetroactiveItemsFromCurrentWeek(
+      buildTwelveWeekSchedule(
+        roadmap,
+        targetConfig,
+        settings,
+        questionSessions,
+      ),
+      settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
+    );
     setWeeklySchedule((current) => {
       const progressItems = current.filter(
         (item) => item.status === "concluido" || item.carryover,
@@ -4328,7 +4344,10 @@ export default function App() {
       recalculateItemsForConfig(current, cycleDraftConfig),
     );
     setWeeklySchedule((current) =>
-      recalculateItemsForConfig(current, cycleDraftConfig),
+      removeRetroactiveItemsFromCurrentWeek(
+        recalculateItemsForConfig(current, cycleDraftConfig),
+        settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
+      ),
     );
     setSettingsSaved(true);
     setTimeout(() => setSettingsSaved(false), 1800);
@@ -4354,7 +4373,10 @@ export default function App() {
             recalculateItemsForConfig(current, cycleDraftConfig),
           );
           setWeeklySchedule((current) =>
-            recalculateItemsForConfig(current, cycleDraftConfig),
+            removeRetroactiveItemsFromCurrentWeek(
+              recalculateItemsForConfig(current, cycleDraftConfig),
+              settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
+            ),
           );
         },
       });
@@ -6012,7 +6034,10 @@ export default function App() {
       );
       setSchedule((current) => recalculateItemsForConfig(current, nextConfig));
       setWeeklySchedule((current) =>
-        recalculateItemsForConfig(current, nextConfig),
+        removeRetroactiveItemsFromCurrentWeek(
+          recalculateItemsForConfig(current, nextConfig),
+          settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
+        ),
       );
     }
 
@@ -7393,15 +7418,18 @@ export default function App() {
           ),
         );
         setWeeklySchedule(
-          withDistributedQuestionTargets(
-            normalizeScheduleItems(
-              Array.isArray(data.weeklySchedule)
-                ? data.weeklySchedule
-                : fixedWeekOneScheduleFromRoadmap(roadmapData, backupConfig),
+          removeRetroactiveItemsFromCurrentWeek(
+            withDistributedQuestionTargets(
+              normalizeScheduleItems(
+                Array.isArray(data.weeklySchedule)
+                  ? data.weeklySchedule
+                  : fixedWeekOneScheduleFromRoadmap(roadmapData, backupConfig),
+                backupConfig,
+              ),
               backupConfig,
+              roadmapData,
             ),
-            backupConfig,
-            roadmapData,
+            data.settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
           ),
         );
         setErrors(Array.isArray(data.errors) ? data.errors : []);
