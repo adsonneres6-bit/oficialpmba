@@ -1600,8 +1600,8 @@ function syncWeeklyQuestionsWithDaily(settings, scheduleConfig) {
 function defaultSettings() {
   return {
     studentName: "",
-    dailyHours: "4",
-    weeklyQuestions: "300",
+    dailyHours: "3",
+    weeklyQuestions: "180",
     examDate: "",
     studyStartDate: TODAY,
   };
