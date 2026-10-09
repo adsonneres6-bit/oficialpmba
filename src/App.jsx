@@ -744,6 +744,21 @@ function currentCycleWeek(
   return Math.min(12, Math.max(1, diffWeeks + 1));
 }
 
+function removeRetroactiveItemsFromCurrentWeek(
+  items,
+  studyStartDate = DEFAULT_STUDY_START_DATE,
+) {
+  const currentWeek = currentCycleWeek(SYSTEM_TODAY, studyStartDate);
+  const todayIndex = WEEK_DAYS.findIndex(([key]) => key === TODAY_DAY_KEY);
+
+  return (Array.isArray(items) ? items : []).filter((item) => {
+    if (Number(item.week) !== Number(currentWeek)) return true;
+    const itemDayIndex = WEEK_DAYS.findIndex(([key]) => key === item.dayKey);
+    if (itemDayIndex < 0) return true;
+    return itemDayIndex >= todayIndex;
+  });
+}
+
 function isoDateForCycleWeekDay(
   week = 1,
   dayKey = TODAY_DAY_KEY,
@@ -2645,7 +2660,12 @@ export default function App() {
       Number(normalized.currentStudyWeek || effectiveCycleWeek),
     );
     setSchedule(normalized.schedule);
-    setWeeklySchedule(normalized.weeklySchedule || []);
+    setWeeklySchedule(
+      removeRetroactiveItemsFromCurrentWeek(
+        normalized.weeklySchedule || [],
+        normalized.settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
+      ),
+    );
     setRoadmap(normalized.roadmap);
     setErrors(normalized.errors || []);
     setReviews(normalized.reviews || []);
@@ -2728,7 +2748,10 @@ export default function App() {
       lastStudyDayKey: currentStudyDayKey,
       lastScheduleSnapshot: schedule,
       schedule,
-      weeklySchedule,
+      weeklySchedule: removeRetroactiveItemsFromCurrentWeek(
+        weeklySchedule,
+        settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
+      ),
       roadmap,
       errors,
       reviews,
@@ -2829,7 +2852,13 @@ export default function App() {
 
   const effectiveWeeklySchedule = useMemo(() => {
     return withDistributedQuestionTargets(
-      normalizeScheduleItems(weeklySchedule, scheduleConfig),
+      normalizeScheduleItems(
+        removeRetroactiveItemsFromCurrentWeek(
+          weeklySchedule,
+          settings.studyStartDate || DEFAULT_STUDY_START_DATE,
+        ),
+        scheduleConfig,
+      ),
       scheduleConfig,
       roadmap,
       { questionCarryovers, studyStartDate: settings.studyStartDate },
@@ -3064,11 +3093,14 @@ export default function App() {
       ),
     );
     setWeeklySchedule((current) =>
-      withDistributedQuestionTargets(
-        normalizeScheduleItems(current, scheduleConfig),
-        scheduleConfig,
-        roadmap,
-        { questionCarryovers, studyStartDate: settings.studyStartDate },
+      removeRetroactiveItemsFromCurrentWeek(
+        withDistributedQuestionTargets(
+          normalizeScheduleItems(current, scheduleConfig),
+          scheduleConfig,
+          roadmap,
+          { questionCarryovers, studyStartDate: settings.studyStartDate },
+        ),
+        settings.studyStartDate || DEFAULT_STUDY_START_DATE,
       ),
     );
   }, [
@@ -4188,17 +4220,15 @@ export default function App() {
     );
     const todayIndex = WEEK_DAYS.findIndex(([key]) => key === TODAY_DAY_KEY);
 
-    const generated = buildTwelveWeekSchedule(
-      roadmap,
-      targetConfig,
-      settings,
-      questionSessions,
-    ).filter((item) => {
-      if (Number(item.week) !== currentWeek) return true;
-      if (item.dayKey === "domingo") return true;
-      const itemDayIndex = WEEK_DAYS.findIndex(([key]) => key === item.dayKey);
-      return itemDayIndex < 0 || itemDayIndex >= todayIndex;
-    });
+    const generated = removeRetroactiveItemsFromCurrentWeek(
+      buildTwelveWeekSchedule(
+        roadmap,
+        targetConfig,
+        settings,
+        questionSessions,
+      ),
+      settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
+    );
     setWeeklySchedule((current) => {
       const progressItems = current.filter(
         (item) => item.status === "concluido" || item.carryover,
@@ -7393,15 +7423,18 @@ export default function App() {
           ),
         );
         setWeeklySchedule(
-          withDistributedQuestionTargets(
-            normalizeScheduleItems(
-              Array.isArray(data.weeklySchedule)
-                ? data.weeklySchedule
-                : fixedWeekOneScheduleFromRoadmap(roadmapData, backupConfig),
+          removeRetroactiveItemsFromCurrentWeek(
+            withDistributedQuestionTargets(
+              normalizeScheduleItems(
+                Array.isArray(data.weeklySchedule)
+                  ? data.weeklySchedule
+                  : fixedWeekOneScheduleFromRoadmap(roadmapData, backupConfig),
+                backupConfig,
+              ),
               backupConfig,
+              roadmapData,
             ),
-            backupConfig,
-            roadmapData,
+            data.settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
           ),
         );
         setErrors(Array.isArray(data.errors) ? data.errors : []);
