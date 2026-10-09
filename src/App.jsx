@@ -1584,8 +1584,8 @@ function buildTwelveWeekSchedule(
 function defaultScheduleConfig() {
   return {
     subjectsPerDay: "2",
-    dailyStudyMinutes: "240",
-    questionMinutes: "50",
+    dailyStudyMinutes: "180",
+    questionMinutes: "30",
     mode: "peso",
     topicLimits: {},
   };
