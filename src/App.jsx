@@ -2601,6 +2601,7 @@ export default function App() {
   const timerIntervalRef = useRef(null);
   const fileInputRef = useRef(null);
   const pdfInputRef = useRef(null);
+  const resetProgressRef = useRef(false);
   const [cloudLoading, setCloudLoading] = useState(Boolean(supabase));
   const [cloudStatus, setCloudStatus] = useState(
     supabase
@@ -2754,6 +2755,10 @@ export default function App() {
       setCloudStatus("Carregando dados do Supabase...");
       const savedState = await loadStateFromSupabase();
       if (!active) return;
+      if (resetProgressRef.current) {
+        setCloudLoading(false);
+        return;
+      }
       if (savedState) {
         applyLoadedState(savedState);
         setCloudStatus("Dados carregados do Supabase.");
@@ -5291,6 +5296,9 @@ export default function App() {
   }
 
   function resetBlock(id) {
+    const block =
+      schedule.find((item) => item.id === id) ||
+      weeklySchedule.find((item) => item.id === id);
     if (!block) return;
 
     openConfirmDialog({
@@ -6996,12 +7004,22 @@ export default function App() {
     });
   }
 
-  function resetSystemNow() {
+  async function resetSystemNow() {
+    resetProgressRef.current = true;
     const fresh = createInitialState();
     const preservedSettings = syncWeeklyQuestionsWithDaily(
       { ...settings },
       defaultScheduleConfig(),
     );
+    const resetState = {
+      ...fresh,
+      roadmapVersion: appState.roadmapVersion,
+      activeExamKey: activeExamKeyState,
+      storageProfileKey: storageProfileKeyState,
+      customExams,
+      deletedBuiltInExamKeys,
+      settings: preservedSettings,
+    };
     activeTimerRef.current = null;
     setActiveBlockId(null);
     setSchedule(fresh.schedule);
@@ -7014,6 +7032,7 @@ export default function App() {
     setNotes([]);
     setQuestionSessions([]);
     setSimulatedTests([]);
+    setQuestionCarryovers(fresh.questionCarryovers);
     setSettings(preservedSettings);
     setCurrentStudyDayKey(TODAY_DAY_KEY);
     setCurrentStudyWeek(effectiveCycleWeek);
@@ -7068,6 +7087,20 @@ export default function App() {
     setImportForm({ subject: "", topics: [""] });
     setImportMessage("");
     setCompletionBlock(null);
+
+    try {
+      const result = await saveStateToSupabase(resetState);
+      setCloudStatus(
+        result.ok
+          ? `Salvo no Supabase às ${new Date().toLocaleTimeString("pt-BR")}`
+          : result.source === "local"
+            ? "Supabase não configurado; salvo somente no cache local."
+            : "Falha ao salvar no Supabase; backup local atualizado.",
+      );
+    } catch (error) {
+      console.error("Erro ao salvar progresso resetado:", error);
+      setCloudStatus("Falha ao salvar no Supabase; backup local atualizado.");
+    }
   }
 
   function restartCycleAtWeekOne() {
