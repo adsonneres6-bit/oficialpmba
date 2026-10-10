@@ -744,21 +744,6 @@ function currentCycleWeek(
   return Math.min(12, Math.max(1, diffWeeks + 1));
 }
 
-function removeRetroactiveItemsFromCurrentWeek(
-  items,
-  studyStartDate = DEFAULT_STUDY_START_DATE,
-) {
-  const currentWeek = currentCycleWeek(SYSTEM_TODAY, studyStartDate);
-  const todayIndex = WEEK_DAYS.findIndex(([key]) => key === TODAY_DAY_KEY);
-
-  return (Array.isArray(items) ? items : []).filter((item) => {
-    if (Number(item.week) !== Number(currentWeek)) return true;
-    const itemDayIndex = WEEK_DAYS.findIndex(([key]) => key === item.dayKey);
-    if (itemDayIndex < 0) return true;
-    return itemDayIndex >= todayIndex;
-  });
-}
-
 function isoDateForCycleWeekDay(
   week = 1,
   dayKey = TODAY_DAY_KEY,
@@ -1400,22 +1385,10 @@ function buildTwelveWeekSchedule(
   const subjectUseCount = {};
   const subjectLastWeek = {};
   const subjectLastDayIndex = {};
-  const currentWeek = currentCycleWeek(
-    SYSTEM_TODAY,
-    settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
-  );
-  const todayIndex = WEEK_DAYS.findIndex(([key]) => key === TODAY_DAY_KEY);
 
   for (let week = 1; week <= 12; week += 1) {
     const weeklyUseCount = {};
     STUDY_DAYS.forEach((dayKey, dayIndex) => {
-      if (
-        week === currentWeek &&
-        WEEK_DAYS.findIndex(([key]) => key === dayKey) < todayIndex
-      ) {
-        return;
-      }
-
       const selectedSubjects = [];
       while (selectedSubjects.length < subjectsPerDay) {
         const candidates = roadmap
@@ -2660,12 +2633,7 @@ export default function App() {
       Number(normalized.currentStudyWeek || effectiveCycleWeek),
     );
     setSchedule(normalized.schedule);
-    setWeeklySchedule(
-      removeRetroactiveItemsFromCurrentWeek(
-        normalized.weeklySchedule || [],
-        normalized.settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
-      ),
-    );
+    setWeeklySchedule(normalized.weeklySchedule || []);
     setRoadmap(normalized.roadmap);
     setErrors(normalized.errors || []);
     setReviews(normalized.reviews || []);
@@ -2748,10 +2716,7 @@ export default function App() {
       lastStudyDayKey: currentStudyDayKey,
       lastScheduleSnapshot: schedule,
       schedule,
-      weeklySchedule: removeRetroactiveItemsFromCurrentWeek(
-        weeklySchedule,
-        settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
-      ),
+      weeklySchedule,
       roadmap,
       errors,
       reviews,
@@ -2852,13 +2817,7 @@ export default function App() {
 
   const effectiveWeeklySchedule = useMemo(() => {
     return withDistributedQuestionTargets(
-      normalizeScheduleItems(
-        removeRetroactiveItemsFromCurrentWeek(
-          weeklySchedule,
-          settings.studyStartDate || DEFAULT_STUDY_START_DATE,
-        ),
-        scheduleConfig,
-      ),
+      normalizeScheduleItems(weeklySchedule, scheduleConfig),
       scheduleConfig,
       roadmap,
       { questionCarryovers, studyStartDate: settings.studyStartDate },
@@ -3093,14 +3052,11 @@ export default function App() {
       ),
     );
     setWeeklySchedule((current) =>
-      removeRetroactiveItemsFromCurrentWeek(
-        withDistributedQuestionTargets(
-          normalizeScheduleItems(current, scheduleConfig),
-          scheduleConfig,
-          roadmap,
-          { questionCarryovers, studyStartDate: settings.studyStartDate },
-        ),
-        settings.studyStartDate || DEFAULT_STUDY_START_DATE,
+      withDistributedQuestionTargets(
+        normalizeScheduleItems(current, scheduleConfig),
+        scheduleConfig,
+        roadmap,
+        { questionCarryovers, studyStartDate: settings.studyStartDate },
       ),
     );
   }, [
@@ -4211,23 +4167,11 @@ export default function App() {
       ...defaultScheduleConfig(),
       ...(configOverride || {}),
     };
-
-    // Gera o ciclo completo, mas não agenda retroativamente os dias que já passaram
-    // na semana atual. Mantém os demais ciclos e os blocos especiais de domingo.
-    const currentWeek = currentCycleWeek(
-      SYSTEM_TODAY,
-      settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
-    );
-    const todayIndex = WEEK_DAYS.findIndex(([key]) => key === TODAY_DAY_KEY);
-
-    const generated = removeRetroactiveItemsFromCurrentWeek(
-      buildTwelveWeekSchedule(
-        roadmap,
-        targetConfig,
-        settings,
-        questionSessions,
-      ),
-      settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
+    const generated = buildTwelveWeekSchedule(
+      roadmap,
+      targetConfig,
+      settings,
+      questionSessions,
     );
     setWeeklySchedule((current) => {
       const progressItems = current.filter(
@@ -6516,63 +6460,25 @@ export default function App() {
       return setExamCreatorMessage(
         "Informe a data da prova ou marque que ainda não há data definida.",
       );
-
     const roadmap = buildRoadmapFromExamForm(examForm);
     if (!roadmap.length)
       return setExamCreatorMessage(
         "Cadastre pelo menos uma matéria com assunto.",
       );
-
-    const editing = allAvailableExams(customExams, deletedBuiltInExamKeys).find(
-      (item) => item.key === editingExamKey,
-    );
+    const editing = customExams.find((item) => item.key === editingExamKey);
     const key = editing ? editing.key : slugifyExamKey(label);
     const versionSuffix = editing ? Number(editing.revision || 1) + 1 : 1;
     const exam = {
-      ...(editing || {}),
       key,
       label,
-      board: editing?.board || "Personalizado",
-      status: editing?.status || "personalizado",
+      board: "Personalizado",
+      status: "personalizado",
       revision: versionSuffix,
       roadmapVersion: `CUSTOM_${key.toUpperCase()}_V${versionSuffix}`,
       examDate: examForm.noExamDate ? "" : examForm.examDate,
       noExamDate: examForm.noExamDate,
       roadmap,
     };
-
-    // Ao editar, mantém a chave do edital e não recria o ciclo do zero.
-    // Preserva o status de conclusão dos assuntos que continuam existindo.
-    const oldRoadmap =
-      editing && activeExamKeyState === editing.key
-        ? appState.roadmap || editing.roadmap || []
-        : editing?.roadmap || [];
-    const oldTopicsBySubject = new Map(
-      oldRoadmap.map((subject) => [
-        String(subject.subject || subject.id || "").trim().toLowerCase(),
-        new Map(
-          (subject.topics || []).map((topic) => [
-            String(topic.title || topic).trim().toLowerCase(), topic,
-          ]),
-        ),
-      ]),
-    );
-    const roadmapWithProgress = roadmap.map((subject) => {
-      const oldTopics = oldTopicsBySubject.get(
-        String(subject.subject || subject.id || "").trim().toLowerCase(),
-      );
-      return {
-        ...subject,
-        topics: subject.topics.map((topic) => {
-          const oldTopic = oldTopics?.get(String(topic.title || "").trim().toLowerCase());
-          return oldTopic
-            ? { ...topic, ...oldTopic, id: topic.id, title: topic.title }
-            : topic;
-        }),
-      };
-    });
-    exam.roadmap = roadmapWithProgress;
-
     const nextCustomExams = [
       ...customExams.filter((item) => item.key !== key),
       exam,
@@ -6580,93 +6486,39 @@ export default function App() {
     setCustomExams(nextCustomExams);
     setExamCreatorMessage(
       editing
-        ? "Edital atualizado. Preservando o progresso do ciclo..."
+        ? "Edital atualizado. Salvando ciclo..."
         : "Edital criado. Ativando ciclo...",
     );
-
-    if (editing) {
-      let targetState = null;
-      const isActive = activeExamKeyState === key;
-
-      if (isActive) {
-        targetState = {
-          ...appState,
-          roadmap: roadmapWithProgress,
-          roadmapVersion: exam.roadmapVersion,
-          settings: {
-            ...appState.settings,
-            examDate: exam.examDate || "",
-          },
-          customExam: true,
-          customExams: nextCustomExams,
-          deletedBuiltInExamKeys,
-        };
-      } else {
-        const storageProfileKey = storageKeyForExam(key);
-        if (supabase) {
-          const { data, error } = await supabase
-            .from(SUPABASE_TABLE)
-            .select("state")
-            .eq("device_id", storageProfileKey)
-            .maybeSingle();
-          if (!error && data?.state) targetState = normalizeLoadedState(data.state);
-        }
-        if (!targetState && typeof window !== "undefined") {
-          const cached = localStorage.getItem(localCacheKeyForExam(key));
-          if (cached) {
-            try { targetState = normalizeLoadedState(JSON.parse(cached)); } catch {}
-          }
-        }
-        if (!targetState) {
-          targetState = createInitialState({
-            ...exam,
-            customExams: nextCustomExams,
-            deletedBuiltInExamKeys,
-          });
-        }
-        targetState = {
-          ...targetState,
-          roadmap: roadmapWithProgress,
-          roadmapVersion: exam.roadmapVersion,
-          settings: {
-            ...targetState.settings,
-            examDate: exam.examDate || "",
-          },
-          customExam: true,
-          activeExamKey: key,
-          storageProfileKey,
-          profileKey: USER_PROFILE_KEY,
-          customExams: nextCustomExams,
-          deletedBuiltInExamKeys,
-        };
-      }
-
-      // Salva o cadastro e o estado do edital editado sem trocar o ciclo ativo.
-      await saveStateToSupabase(targetState);
-      if (isActive) applyLoadedState(targetState);
-      else await saveStateToSupabase({
+    const nextState = createInitialState({
+      ...exam,
+      customExams: nextCustomExams,
+      deletedBuiltInExamKeys,
+    });
+    nextState.settings = {
+      ...nextState.settings,
+      examDate: exam.examDate || "",
+    };
+    nextState.customExam = true;
+    nextState.customExams = nextCustomExams;
+    nextState.deletedBuiltInExamKeys = deletedBuiltInExamKeys;
+    if (editing && activeExamKeyState !== key) {
+      await saveStateToSupabase({
+        ...nextState,
+        activeExamKey: key,
+        storageProfileKey: storageKeyForExam(key),
+      });
+      const currentState = {
         ...appState,
         customExams: nextCustomExams,
         deletedBuiltInExamKeys,
-      });
-    } else {
-      const nextState = createInitialState({
-        ...exam,
-        customExams: nextCustomExams,
-        deletedBuiltInExamKeys,
-      });
-      nextState.settings = {
-        ...nextState.settings,
-        examDate: exam.examDate || "",
       };
-      nextState.customExam = true;
-      nextState.customExams = nextCustomExams;
-      nextState.deletedBuiltInExamKeys = deletedBuiltInExamKeys;
+      setCustomExams(nextCustomExams);
+      await saveStateToSupabase(currentState);
+    } else {
       applyLoadedState(nextState);
       await saveStateToSupabase(nextState);
       setView("dashboard");
     }
-
     setExamCreatorOpen(false);
     resetExamCreatorForm();
   }
@@ -7144,66 +6996,31 @@ export default function App() {
     });
   }
 
-  async function resetSystemNow() {
-    // O reset deve remover também o edital importado/criado e os perfis salvos,
-    // não apenas os registros de progresso.
+  function resetSystemNow() {
     const fresh = createInitialState();
-    const freshConfig = defaultScheduleConfig();
-    const freshSettings = syncWeeklyQuestionsWithDaily(
-      defaultSettings(),
-      freshConfig,
+    const preservedSettings = syncWeeklyQuestionsWithDaily(
+      { ...settings },
+      defaultScheduleConfig(),
     );
-    const emptyProfileKey = storageKeyForExam(ACTIVE_EXAM_KEY);
-    const resetState = {
-      ...fresh,
-      view: "dashboard",
-      activeExamKey: ACTIVE_EXAM_KEY,
-      storageProfileKey: emptyProfileKey,
-      customExams: [],
-      deletedBuiltInExamKeys: [],
-      roadmap: [],
-      schedule: [],
-      weeklySchedule: [],
-      errors: [],
-      reviews: [],
-      notes: [],
-      questionSessions: [],
-      simulatedTests: [],
-      questionCarryovers: [],
-      settings: freshSettings,
-      scheduleConfig: freshConfig,
-      currentStudyDayKey: TODAY_DAY_KEY,
-      currentStudyWeek: 1,
-      currentStudyIsoDate: TODAY,
-    };
-
     activeTimerRef.current = null;
     setActiveBlockId(null);
-
-    setSchedule([]);
-    setWeeklySchedule([]);
-    setRoadmap([]);
-    setScheduleConfig(freshConfig);
-    setCycleDraftConfig(freshConfig);
+    setSchedule(fresh.schedule);
+    setWeeklySchedule(fresh.weeklySchedule);
+    setRoadmap(fresh.roadmap);
+    setScheduleConfig(defaultScheduleConfig());
+    setCycleDraftConfig(defaultScheduleConfig());
     setErrors([]);
     setReviews([]);
     setNotes([]);
     setQuestionSessions([]);
     setSimulatedTests([]);
-    setQuestionCarryovers([]);
-    setSettings(freshSettings);
-
-    setCustomExams([]);
-    setDeletedBuiltInExamKeys([]);
-    setActiveExamKeyState(ACTIVE_EXAM_KEY);
-    setStorageProfileKeyState(emptyProfileKey);
-
+    setSettings(preservedSettings);
     setCurrentStudyDayKey(TODAY_DAY_KEY);
-    setCurrentStudyWeek(1);
+    setCurrentStudyWeek(effectiveCycleWeek);
     setView("dashboard");
     setWeeklyDayFilter(TODAY_DAY_KEY);
-    setWeeklyWeekFilter(1);
-    setScheduleWeekFilter(1);
+    setWeeklyWeekFilter(effectiveCycleWeek);
+    setScheduleWeekFilter(effectiveCycleWeek);
     setScheduleDayFilter("all");
     setScheduleSubjectFrequencyFilter("all");
     setRoadmapSubject("all");
@@ -7251,53 +7068,6 @@ export default function App() {
     setImportForm({ subject: "", topics: [""] });
     setImportMessage("");
     setCompletionBlock(null);
-
-    try {
-      if (typeof window !== "undefined") {
-        const keysToRemove = [];
-        for (let i = 0; i < localStorage.length; i += 1) {
-          const key = localStorage.key(i);
-          if (
-            key &&
-            (key.startsWith("study_app_state_cache__") ||
-              key.startsWith("study_app_previous_day_question_alert_ack__"))
-          ) {
-            keysToRemove.push(key);
-          }
-        }
-        keysToRemove.forEach((key) => localStorage.removeItem(key));
-        localStorage.removeItem(ACTIVE_EXAM_LOCAL_KEY);
-        localStorage.removeItem(LOCAL_CACHE_KEY);
-        localStorage.removeItem(PREVIOUS_DAY_QUESTION_ALERT_ACK_KEY);
-      }
-
-      if (supabase) {
-        // Apaga todos os registros vinculados a este perfil, incluindo o índice
-        // que poderia reativar um edital antigo após F5.
-        const { error: deleteError } = await supabase
-          .from(SUPABASE_TABLE)
-          .delete()
-          .like("device_id", `${USER_PROFILE_KEY}__%`);
-
-        if (deleteError) throw deleteError;
-
-        // Grava um estado vazio explícito para que a hidratação não recupere
-        // um estado antigo caso a tabela fique sem registro para o perfil-base.
-        const saveResult = await saveStateToSupabase(resetState);
-        if (!saveResult.ok) {
-          throw saveResult.error || new Error("Não foi possível salvar o reset.");
-        }
-        setCloudStatus("Sistema resetado. Nenhum edital está ativo.");
-      } else {
-        saveStateToLocalCache(resetState);
-        setCloudStatus("Sistema resetado no armazenamento local.");
-      }
-    } catch (error) {
-      console.error("Erro ao resetar completamente o sistema:", error);
-      setCloudStatus(
-        "Reset local realizado, mas houve falha ao limpar/salvar no Supabase. Verifique o console e as permissões de exclusão.",
-      );
-    }
   }
 
   function restartCycleAtWeekOne() {
@@ -7515,18 +7285,15 @@ export default function App() {
           ),
         );
         setWeeklySchedule(
-          removeRetroactiveItemsFromCurrentWeek(
-            withDistributedQuestionTargets(
-              normalizeScheduleItems(
-                Array.isArray(data.weeklySchedule)
-                  ? data.weeklySchedule
-                  : fixedWeekOneScheduleFromRoadmap(roadmapData, backupConfig),
-                backupConfig,
-              ),
+          withDistributedQuestionTargets(
+            normalizeScheduleItems(
+              Array.isArray(data.weeklySchedule)
+                ? data.weeklySchedule
+                : fixedWeekOneScheduleFromRoadmap(roadmapData, backupConfig),
               backupConfig,
-              roadmapData,
             ),
-            data.settings?.studyStartDate || DEFAULT_STUDY_START_DATE,
+            backupConfig,
+            roadmapData,
           ),
         );
         setErrors(Array.isArray(data.errors) ? data.errors : []);
