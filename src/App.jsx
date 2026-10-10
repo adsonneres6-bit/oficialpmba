@@ -4249,6 +4249,7 @@ export default function App() {
       targetConfig,
       settings,
       questionSessions,
+      TODAY_DAY_KEY,
     );
     setWeeklySchedule((current) => {
       const progressItems = current.filter(
