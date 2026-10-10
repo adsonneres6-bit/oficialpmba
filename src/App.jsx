@@ -32,7 +32,7 @@ import {
   Zap,
 } from "lucide-react";
 
-const APP_VERSION = "V3";
+const APP_VERSION = "V4";
 const ROADMAP_VERSION = "EMPTY_V1";
 const USER_PROFILE_KEY = "usuario_principal";
 const ACTIVE_EXAM_KEY = "";
