@@ -32,7 +32,7 @@ import {
   Zap,
 } from "lucide-react";
 
-const APP_VERSION = "V2";
+const APP_VERSION = "V3";
 const ROADMAP_VERSION = "EMPTY_V1";
 const USER_PROFILE_KEY = "usuario_principal";
 const ACTIVE_EXAM_KEY = "";
@@ -1369,6 +1369,7 @@ function buildTwelveWeekSchedule(
   scheduleConfig = defaultScheduleConfig(),
   settings = defaultSettings(),
   questionSessions = [],
+  firstWeekStartDayKey = STUDY_DAYS[0],
 ) {
   const dailyQuestions = dailyQuestionTarget(scheduleConfig);
   const dailyStudyMinutes = Math.max(
@@ -1385,10 +1386,16 @@ function buildTwelveWeekSchedule(
   const subjectUseCount = {};
   const subjectLastWeek = {};
   const subjectLastDayIndex = {};
+  const requestedStartDayIndex = STUDY_DAYS.indexOf(firstWeekStartDayKey);
+  const firstWeekStartIndex =
+    firstWeekStartDayKey === "domingo"
+      ? STUDY_DAYS.length
+      : Math.max(0, requestedStartDayIndex);
 
   for (let week = 1; week <= 12; week += 1) {
     const weeklyUseCount = {};
     STUDY_DAYS.forEach((dayKey, dayIndex) => {
+      if (week === 1 && dayIndex < firstWeekStartIndex) return;
       const selectedSubjects = [];
       while (selectedSubjects.length < subjectsPerDay) {
         const candidates = roadmap
@@ -1580,7 +1587,10 @@ function defaultSettings() {
   };
 }
 
-function createInitialState(examOverride = null) {
+function createInitialState(
+  examOverride = null,
+  firstWeekStartDayKey = STUDY_DAYS[0],
+) {
   const roadmap = clone(examOverride?.roadmap || roadmapSeed);
   const scheduleConfig = defaultScheduleConfig();
   const settings = syncWeeklyQuestionsWithDaily(
@@ -1589,7 +1599,13 @@ function createInitialState(examOverride = null) {
   );
   const hasRoadmap = Array.isArray(roadmap) && roadmap.length > 0;
   const weeklySchedule = hasRoadmap
-    ? buildTwelveWeekSchedule(roadmap, scheduleConfig, settings, [])
+    ? buildTwelveWeekSchedule(
+        roadmap,
+        scheduleConfig,
+        settings,
+        [],
+        firstWeekStartDayKey,
+      )
     : [];
   const schedule = hasRoadmap
     ? scheduleFromWeekly(weeklySchedule, roadmap, 1, TODAY_DAY_KEY)
@@ -1767,6 +1783,39 @@ function saveStateToLocalCache(state) {
   } catch (error) {
     console.error("Erro ao salvar cache local:", error);
   }
+}
+function clearLocalProfileData() {
+  if (typeof window === "undefined") return;
+  const cachePrefix = `study_app_state_cache__${USER_PROFILE_KEY}__`;
+  const alertPrefix = `study_app_previous_day_question_alert_ack__${USER_PROFILE_KEY}__`;
+  const keysToRemove = [];
+
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (
+      key === ACTIVE_EXAM_LOCAL_KEY ||
+      key === DEVICE_ID_KEY ||
+      key?.startsWith(cachePrefix) ||
+      key?.startsWith(alertPrefix)
+    ) {
+      keysToRemove.push(key);
+    }
+  }
+
+  keysToRemove.forEach((key) => localStorage.removeItem(key));
+}
+async function deleteProfileDataFromSupabase() {
+  if (!supabase) return false;
+  const escapedPrefix = `${USER_PROFILE_KEY}__`.replace(/[\\%_]/g, "\\$&");
+  const { error } = await supabase
+    .from(SUPABASE_TABLE)
+    .delete()
+    .like("device_id", `${escapedPrefix}%`);
+  if (error) {
+    console.error("Erro ao apagar dados do perfil no Supabase:", error);
+    throw error;
+  }
+  return true;
 }
 async function loadProfileIndexFromSupabase() {
   const localActiveExamKey = getLocalActiveExamKey();
@@ -2602,6 +2651,9 @@ export default function App() {
   const fileInputRef = useRef(null);
   const pdfInputRef = useRef(null);
   const resetProgressRef = useRef(false);
+  const clearingProfileRef = useRef(false);
+  const skipPersistenceSnapshotRef = useRef(null);
+  const pendingStateSaveRef = useRef(null);
   const [cloudLoading, setCloudLoading] = useState(Boolean(supabase));
   const [cloudStatus, setCloudStatus] = useState(
     supabase
@@ -2779,6 +2831,13 @@ export default function App() {
     if (cloudLoading) return undefined;
 
     const timeout = setTimeout(async () => {
+      if (clearingProfileRef.current) return;
+      if (skipPersistenceSnapshotRef.current) {
+        const isResetSnapshot =
+          JSON.stringify(appState) === skipPersistenceSnapshotRef.current;
+        skipPersistenceSnapshotRef.current = null;
+        if (isResetSnapshot) return;
+      }
       const portugues = appState.roadmap.find(
         (s) => s.id === "lingua_portuguesa",
       );
@@ -2788,7 +2847,20 @@ export default function App() {
         portugues?.topics.find((t) => t.title.includes("Reconhecimento")),
       );
 
-      const result = await saveStateToSupabase(appState);
+      const savePromise = saveStateToSupabase(appState);
+      pendingStateSaveRef.current = savePromise;
+      let result;
+      try {
+        result = await savePromise;
+      } catch (error) {
+        console.error("Erro ao salvar estado no Supabase:", error);
+        setCloudStatus("Falha ao salvar no Supabase; backup local atualizado.");
+        return;
+      } finally {
+        if (pendingStateSaveRef.current === savePromise) {
+          pendingStateSaveRef.current = null;
+        }
+      }
 
       console.log("Resultado:", result);
 
@@ -6497,11 +6569,14 @@ export default function App() {
         ? "Edital atualizado. Salvando ciclo..."
         : "Edital criado. Ativando ciclo...",
     );
-    const nextState = createInitialState({
-      ...exam,
-      customExams: nextCustomExams,
-      deletedBuiltInExamKeys,
-    });
+    const nextState = createInitialState(
+      {
+        ...exam,
+        customExams: nextCustomExams,
+        deletedBuiltInExamKeys,
+      },
+      editing ? STUDY_DAYS[0] : TODAY_DAY_KEY,
+    );
     nextState.settings = {
       ...nextState.settings,
       examDate: exam.examDate || "",
@@ -6996,7 +7071,7 @@ export default function App() {
     openConfirmDialog({
       title: "Deseja resetar?",
       message:
-        "Essa ação vai apagar o progresso, questões, erros, revisões, anotações e simulados salvos neste dispositivo.",
+        "Essa ação vai apagar todos os dados e editais salvos neste dispositivo e no Supabase. Essa ação não pode ser desfeita.",
       confirmLabel: "Sim",
       cancelLabel: "Não",
       tone: "red",
@@ -7006,25 +7081,22 @@ export default function App() {
 
   async function resetSystemNow() {
     resetProgressRef.current = true;
+    clearingProfileRef.current = true;
+    setCloudLoading(true);
+    setCloudStatus("Apagando dados e editais...");
     const fresh = createInitialState();
-    const preservedSettings = syncWeeklyQuestionsWithDaily(
-      { ...settings },
-      defaultScheduleConfig(),
-    );
-    const resetState = {
-      ...fresh,
-      roadmapVersion: appState.roadmapVersion,
-      activeExamKey: activeExamKeyState,
-      storageProfileKey: storageProfileKeyState,
-      customExams,
-      deletedBuiltInExamKeys,
-      settings: preservedSettings,
-    };
+    const resetSnapshot = { ...fresh };
+    delete resetSnapshot.deletedBuiltInExamKeys;
+    skipPersistenceSnapshotRef.current = JSON.stringify(resetSnapshot);
     activeTimerRef.current = null;
     setActiveBlockId(null);
     setSchedule(fresh.schedule);
     setWeeklySchedule(fresh.weeklySchedule);
     setRoadmap(fresh.roadmap);
+    setCustomExams([]);
+    setDeletedBuiltInExamKeys([]);
+    setActiveExamKeyState(fresh.activeExamKey);
+    setStorageProfileKeyState(fresh.storageProfileKey);
     setScheduleConfig(defaultScheduleConfig());
     setCycleDraftConfig(defaultScheduleConfig());
     setErrors([]);
@@ -7033,13 +7105,13 @@ export default function App() {
     setQuestionSessions([]);
     setSimulatedTests([]);
     setQuestionCarryovers(fresh.questionCarryovers);
-    setSettings(preservedSettings);
+    setSettings(fresh.settings);
     setCurrentStudyDayKey(TODAY_DAY_KEY);
-    setCurrentStudyWeek(effectiveCycleWeek);
+    setCurrentStudyWeek(fresh.currentStudyWeek);
     setView("dashboard");
     setWeeklyDayFilter(TODAY_DAY_KEY);
-    setWeeklyWeekFilter(effectiveCycleWeek);
-    setScheduleWeekFilter(effectiveCycleWeek);
+    setWeeklyWeekFilter(fresh.currentStudyWeek);
+    setScheduleWeekFilter(fresh.currentStudyWeek);
     setScheduleDayFilter("all");
     setScheduleSubjectFrequencyFilter("all");
     setRoadmapSubject("all");
@@ -7087,19 +7159,53 @@ export default function App() {
     setImportForm({ subject: "", topics: [""] });
     setImportMessage("");
     setCompletionBlock(null);
+    setDismissedPreviousDayQuestionAlertId("");
+    setManualScheduleWeek(fresh.currentStudyWeek);
+    resetExamCreatorForm();
+    setExamCreatorOpen(false);
 
+    let localClearError = null;
+    let supabaseClearError = null;
     try {
-      const result = await saveStateToSupabase(resetState);
+      if (pendingStateSaveRef.current) {
+        try {
+          await pendingStateSaveRef.current;
+        } catch (error) {
+          console.error("Falha ao aguardar salvamento pendente:", error);
+        }
+      }
+      try {
+        clearLocalProfileData();
+      } catch (error) {
+        localClearError = error;
+        console.error("Erro ao limpar dados locais do perfil:", error);
+      }
+      try {
+        await deleteProfileDataFromSupabase();
+      } catch (error) {
+        supabaseClearError = error;
+      }
+    } finally {
+      clearingProfileRef.current = false;
+      setCloudLoading(false);
+    }
+
+    if (localClearError || supabaseClearError) {
+      const failedStores = [
+        localClearError && "LocalStorage",
+        supabaseClearError && "Supabase",
+      ]
+        .filter(Boolean)
+        .join(" e ");
       setCloudStatus(
-        result.ok
-          ? `Salvo no Supabase às ${new Date().toLocaleTimeString("pt-BR")}`
-          : result.source === "local"
-            ? "Supabase não configurado; salvo somente no cache local."
-            : "Falha ao salvar no Supabase; backup local atualizado.",
+        `Falha ao limpar ${failedStores}. Verifique a conexão/permissões e o console.`,
       );
-    } catch (error) {
-      console.error("Erro ao salvar progresso resetado:", error);
-      setCloudStatus("Falha ao salvar no Supabase; backup local atualizado.");
+    } else if (!supabase) {
+      setCloudStatus(
+        "Dados e editais removidos do LocalStorage. Supabase não configurado.",
+      );
+    } else {
+      setCloudStatus("Todos os dados e editais foram apagados.");
     }
   }
 
