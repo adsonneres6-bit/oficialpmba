@@ -4419,10 +4419,17 @@ export default function App() {
 
   function emptyManualDraft(slots = subjectsPerDaySlots()) {
     return Object.fromEntries(
-      WEEK_DAYS.map(([dayKey]) => [
-        dayKey,
-        Array.from({ length: slots }, () => ({ subjectId: "", topicId: "" })),
-      ]),
+      WEEK_DAYS.map(([dayKey]) => {
+        const daySlots =
+          dayKey === "domingo" ? MANUAL_SPECIAL_BLOCKS.length : slots;
+        return [
+          dayKey,
+          Array.from({ length: daySlots }, () => ({
+            subjectId: "",
+            topicId: "",
+          })),
+        ];
+      }),
     );
   }
 
@@ -4478,9 +4485,25 @@ export default function App() {
             item.dayKey === dayKey &&
             !item.carryover,
         )
-        .slice(0, slots);
-      draft[dayKey] = Array.from({ length: slots }, (_, index) => {
+        .slice(
+          0,
+          dayKey === "domingo"
+            ? Math.max(MANUAL_SPECIAL_BLOCKS.length, draft[dayKey].length)
+            : slots,
+        );
+      const daySlots =
+        dayKey === "domingo"
+          ? Math.max(MANUAL_SPECIAL_BLOCKS.length, items.length)
+          : slots;
+      draft[dayKey] = Array.from({ length: daySlots }, (_, index) => {
         const item = items[index];
+        if (!item && dayKey === "domingo" && !items.length) {
+          const special = MANUAL_SPECIAL_BLOCKS[index];
+          return {
+            subjectId: special?.id || "",
+            topicId: special?.id || "",
+          };
+        }
         if (!item) return { subjectId: "", topicId: "" };
         const topicId =
           item.topicId ||
@@ -4565,7 +4588,7 @@ export default function App() {
         return { subjectId: chosen.id, topicId: "" };
       });
     });
-    draft.domingo = [];
+    draft.domingo = draftFromWeek(week, slots).domingo;
     return draft;
   }
 
@@ -4575,8 +4598,8 @@ export default function App() {
     setManualScheduleDraft(suggestedManualDraftForWeek(manualScheduleWeek));
     setManualScheduleMessage(
       hasPerformanceData
-        ? `Sugestão criada para a Ciclo ${manualScheduleWeek} priorizando matérias com menor desempenho, mais erros e menor progresso. O domingo continua fixo.`
-        : `Sugestão criada para a Ciclo ${manualScheduleWeek} com base nos pesos do edital. Depois que você registrar questões e erros, esse botão passa a priorizar desempenho também. O domingo continua fixo.`,
+        ? `Sugestão criada para a Ciclo ${manualScheduleWeek} priorizando matérias com menor desempenho, mais erros e menor progresso. Os blocos de domingo foram mantidos.`
+        : `Sugestão criada para a Ciclo ${manualScheduleWeek} com base nos pesos do edital. Depois que você registrar questões e erros, esse botão passa a priorizar desempenho também. Os blocos de domingo foram mantidos.`,
     );
   }
 
@@ -4587,17 +4610,50 @@ export default function App() {
       Number(scheduleConfig.dailyStudyMinutes) || 180,
     );
     const minutesPerBlock = Math.max(30, Math.round(dailyStudyMinutes / slots));
-    const sundayMinutes = Math.max(
-      30,
-      Math.round(dailyStudyMinutes / MANUAL_SPECIAL_BLOCKS.length),
-    );
     const items = [];
     const usedTopics = new Set();
 
-    WEEK_DAYS.filter(([dayKey]) => dayKey !== "domingo").forEach(([dayKey]) => {
-      const daySlots = (draft?.[dayKey] || []).slice(0, slots);
+    WEEK_DAYS.forEach(([dayKey]) => {
+      const daySlots =
+        dayKey === "domingo"
+          ? draft?.[dayKey] || []
+          : (draft?.[dayKey] || []).slice(0, slots);
+      const populatedSlots = daySlots.filter((slot) => slot?.subjectId).length;
+      const blockMinutes =
+        dayKey === "domingo" && populatedSlots
+          ? Math.max(30, Math.round(dailyStudyMinutes / populatedSlots))
+          : minutesPerBlock;
+
       daySlots.forEach((slot, index) => {
         if (!slot?.subjectId) return;
+        const special = MANUAL_SPECIAL_BLOCKS.find(
+          (item) => item.id === slot.subjectId,
+        );
+        if (special) {
+          items.push({
+            id: `manual-w${week}-${dayKey}-${index}-${special.id}`,
+            week: Number(week),
+            dayKey,
+            dayLabel: dayLabel(dayKey),
+            subjectId: special.id,
+            topicId: special.id,
+            topicIds: [],
+            subject: special.subject,
+            topic:
+              special.id === "planejamento"
+                ? `Gerar e ajustar o Ciclo ${Number(week) + 1}`
+                : special.topic,
+            type: special.type,
+            minutes: blockMinutes,
+            questionsTarget: 0,
+            status: "pendente",
+            elapsedSeconds: 0,
+            plannedBy: "manual-fixo",
+            manualSlot: index + 1,
+          });
+          return;
+        }
+
         const subject = getSubject(roadmap, slot.subjectId);
         if (!subject) return;
         const autoTopicId = nextTopicForManualSubject(
@@ -4619,7 +4675,7 @@ export default function App() {
           subject: subject.subject,
           topic: topic?.title || "Assunto a definir",
           type: "Estudo",
-          minutes: minutesPerBlock,
+          minutes: blockMinutes,
           questionsTarget: 0,
           status: "pendente",
           elapsedSeconds: 0,
@@ -4627,30 +4683,6 @@ export default function App() {
           plannedWeight: subject.weight,
           manualSlot: index + 1,
         });
-      });
-    });
-
-    MANUAL_SPECIAL_BLOCKS.forEach((special, index) => {
-      items.push({
-        id: `manual-w${week}-domingo-${index}-${special.id}`,
-        week: Number(week),
-        dayKey: "domingo",
-        dayLabel: dayLabel("domingo"),
-        subjectId: special.id,
-        topicId: special.id,
-        topicIds: [],
-        subject: special.subject,
-        topic:
-          special.id === "planejamento"
-            ? `Gerar e ajustar o Ciclo ${Number(week) + 1}`
-            : special.topic,
-        type: special.type,
-        minutes: sundayMinutes,
-        questionsTarget: 0,
-        status: "pendente",
-        elapsedSeconds: 0,
-        plannedBy: "manual-fixo",
-        manualSlot: index + 1,
       });
     });
 
@@ -8662,7 +8694,7 @@ export default function App() {
                       <SectionTitle
                         icon={Edit3}
                         title="Editar cronograma manual"
-                        subtitle={`Ciclo ${manualScheduleWeek}: escolha somente as matérias de segunda a sábado. Os assuntos são gerados automaticamente e o domingo fica fixo.`}
+                        subtitle={`Ciclo ${manualScheduleWeek}: escolha as matérias ou blocos de todos os dias. Os assuntos das matérias são gerados automaticamente.`}
                       />
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -8691,36 +8723,11 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="mt-4 rounded-3xl border border-stone-200 bg-stone-50 p-4">
-                    <p className="text-xs font-black uppercase tracking-[0.18em] text-stone-400">
-                      Domingo fixo
-                    </p>
-                    <div className="mt-3 grid gap-3 md:grid-cols-3">
-                      {MANUAL_SPECIAL_BLOCKS.map((special) => (
-                        <div
-                          key={special.id}
-                          className="rounded-2xl border border-stone-200 bg-white p-3"
-                        >
-                          <p className="text-sm font-black text-stone-950">
-                            {special.subject}
-                          </p>
-                          <p className="mt-1 text-xs font-semibold text-stone-600">
-                            {special.id === "planejamento"
-                              ? `Gerar e ajustar o Ciclo ${Number(manualScheduleWeek) + 1}`
-                              : special.topic}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
                   <div className="mt-5 overflow-x-auto">
-                    <table className="min-w-[980px] w-full border-collapse text-left">
+                    <table className="min-w-[1120px] w-full border-collapse text-left">
                       <thead>
                         <tr className="bg-stone-950 text-white">
-                          {WEEK_DAYS.filter(
-                            ([dayKey]) => dayKey !== "domingo",
-                          ).map(([dayKey, label]) => (
+                          {WEEK_DAYS.map(([dayKey, label]) => (
                             <th
                               key={dayKey}
                               className="border-r border-white/10 px-4 py-3 text-sm font-black"
@@ -8732,15 +8739,30 @@ export default function App() {
                       </thead>
                       <tbody>
                         {Array.from(
-                          { length: subjectsPerDaySlots() },
+                          {
+                            length: Math.max(
+                              subjectsPerDaySlots(),
+                              manualScheduleDraft?.domingo?.length || 0,
+                            ),
+                          },
                           (_, slotIndex) => (
                             <tr
                               key={slotIndex}
                               className="border-b border-stone-100"
                             >
-                              {WEEK_DAYS.filter(
-                                ([dayKey]) => dayKey !== "domingo",
-                              ).map(([dayKey]) => {
+                              {WEEK_DAYS.map(([dayKey]) => {
+                                const daySlots =
+                                  dayKey === "domingo"
+                                    ? manualScheduleDraft?.domingo?.length || 0
+                                    : subjectsPerDaySlots();
+                                if (slotIndex >= daySlots) {
+                                  return (
+                                    <td
+                                      key={`${dayKey}-${slotIndex}`}
+                                      className="w-[14.28%] border-r border-stone-100 bg-stone-50 p-3"
+                                    />
+                                  );
+                                }
                                 const slot = manualScheduleDraft?.[dayKey]?.[
                                   slotIndex
                                 ] || {
@@ -8750,7 +8772,7 @@ export default function App() {
                                 return (
                                   <td
                                     key={`${dayKey}-${slotIndex}`}
-                                    className="w-[16.66%] align-top border-r border-stone-100 bg-white p-3"
+                                    className="w-[14.28%] align-top border-r border-stone-100 bg-white p-3"
                                   >
                                     <p className="mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-stone-400">
                                       Bloco {slotIndex + 1}
@@ -8768,6 +8790,15 @@ export default function App() {
                                       className="w-full rounded-2xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700"
                                     >
                                       <option value="">Sem bloco</option>
+                                      {dayKey === "domingo" &&
+                                        MANUAL_SPECIAL_BLOCKS.map((special) => (
+                                          <option
+                                            key={special.id}
+                                            value={special.id}
+                                          >
+                                            {special.subject}
+                                          </option>
+                                        ))}
                                       {subjectsList.map((subject) => (
                                         <option
                                           key={subject.id}
@@ -8778,8 +8809,9 @@ export default function App() {
                                       ))}
                                     </select>
                                     <p className="mt-2 text-[11px] font-semibold leading-relaxed text-stone-500">
-                                      O assunto será escolhido automaticamente
-                                      ao salvar.
+                                      {dayKey === "domingo"
+                                        ? "Escolha uma matéria ou outro bloco; deixe sem bloco para remover."
+                                        : "O assunto será escolhido automaticamente ao salvar."}
                                     </p>
                                   </td>
                                 );
