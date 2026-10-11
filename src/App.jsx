@@ -16,6 +16,7 @@ import {
   FileText,
   Flame,
   Home,
+  Menu,
   NotebookPen,
   Pause,
   Play,
@@ -834,16 +835,17 @@ function ConfettiBurst({ active }) {
 }
 
 function nextStudyDayKey(dayKey) {
-  const index = STUDY_DAYS.indexOf(dayKey);
-  if (index === -1 || dayKey === "sabado") return "segunda";
-  return STUDY_DAYS[index + 1] || "segunda";
+  const days = WEEK_DAYS.map(([key]) => key);
+  const index = days.indexOf(dayKey);
+  if (index < 0 || index === days.length - 1) return "segunda";
+  return days[index + 1];
 }
 
 function previousStudyDayKey(dayKey) {
-  if (dayKey === "segunda" || dayKey === "domingo") return "sabado";
-  const index = STUDY_DAYS.indexOf(dayKey);
+  const days = WEEK_DAYS.map(([key]) => key);
+  const index = days.indexOf(dayKey);
   if (index <= 0) return null;
-  return STUDY_DAYS[index - 1];
+  return days[index - 1];
 }
 
 function getSubject(roadmap, id) {
@@ -992,9 +994,7 @@ function hydrateSchedule(schedule, roadmap) {
 }
 
 function isSundayStudyActivity(item) {
-  return ["simulado", "caderno_erros", "planejamento"].includes(
-    item?.subjectId,
-  );
+  return   ["simulado", "caderno_erros", "planejamento"].includes(item?.subjectId);
 }
 
 function shouldShowInStudyDay(item, dayKey) {
@@ -1058,9 +1058,12 @@ function carryoverFromPreviousSchedule(
           (previousDay === "sabado" &&
             Number(item.week || 0) === currentWeek - 1)) &&
         item.status !== "concluido" &&
-        !["questoes", "simulado", "caderno_erros", "planejamento"].includes(
-          item.subjectId,
-        ),
+        ![
+          "questoes",
+          "simulado",
+          "caderno_erros",
+          "planejamento",
+        ].includes(item.subjectId),
     )
     .map((item) => ({
       ...item,
@@ -1094,9 +1097,12 @@ function carryoverFromSaturdayBase(
         Number(item.week) === currentWeek - 1 &&
         item.dayKey === "sabado" &&
         item.status !== "concluido" &&
-        !["questoes", "simulado", "caderno_erros", "planejamento"].includes(
-          item.subjectId,
-        ),
+        ![
+          "questoes",
+          "simulado",
+          "caderno_erros",
+          "planejamento",
+        ].includes(item.subjectId),
     )
     .map((item) => ({
       ...item,
@@ -1233,8 +1239,20 @@ function topicPerformanceScore(subjectId, topicId, questionSessions = []) {
   return done > 0 ? wrong * 3 + Math.max(0, 75 - accuracy) : 0;
 }
 
+function normalizeTopicPriority(priority) {
+  const normalized = String(priority || "Média")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "alta") return "Alta";
+  if (normalized === "media") return "Média";
+  if (normalized === "baixa") return "Baixa";
+  return "Média";
+}
+
 function topicPriorityValue(topic) {
-  const priority = topic?.priority || "Média";
+  const priority = normalizeTopicPriority(topic?.priority);
   if (priority === "Alta") return 3;
   if (priority === "Média") return 2;
   return 1;
@@ -1400,17 +1418,22 @@ function buildTwelveWeekSchedule(
       while (selectedSubjects.length < subjectsPerDay) {
         const candidates = roadmap
           .map((subject) => {
+            const nextTopic = sortedTopicsForSubject(
+              subject,
+              usedTopicIdsBySubject,
+              questionSessions,
+            )[0];
             const totalTopics = subject.topics?.length || 0;
             const usedCount = usedTopicIdsBySubject[subject.id]?.size || 0;
             const hasUnusedTopics = totalTopics > 0 && usedCount < totalTopics;
             const highPriorityMissing = (subject.topics || []).filter(
               (topic) =>
-                topic.priority === "Alta" &&
+                topicPriorityValue(topic) === 3 &&
                 !usedTopicIdsBySubject[subject.id]?.has(topic.id),
             ).length;
             const mediumPriorityMissing = (subject.topics || []).filter(
               (topic) =>
-                topic.priority === "Média" &&
+                topicPriorityValue(topic) === 2 &&
                 !usedTopicIdsBySubject[subject.id]?.has(topic.id),
             ).length;
             const neverStudied = !subjectUseCount[subject.id];
@@ -1455,6 +1478,8 @@ function buildTwelveWeekSchedule(
               1;
             return {
               ...subject,
+              nextTopicPriority: topicPriorityValue(nextTopic),
+              repeatedYesterday,
               score:
                 (weightScore +
                   coverageBonus +
@@ -1471,8 +1496,13 @@ function buildTwelveWeekSchedule(
           )
           .sort(
             (a, b) =>
+              (weeklyUseCount[a.id] || 0) - (weeklyUseCount[b.id] || 0) ||
+              Number(a.repeatedYesterday) - Number(b.repeatedYesterday) ||
+              b.nextTopicPriority - a.nextTopicPriority ||
+              Number(b.weight || 0) - Number(a.weight || 0) ||
+              (subjectUseCount[a.id] || 0) - (subjectUseCount[b.id] || 0) ||
               b.score - a.score ||
-              Number(b.weight || 0) - Number(a.weight || 0),
+              String(a.subject).localeCompare(String(b.subject), "pt-BR"),
           );
         if (!candidates.length) break;
         const selected = candidates[0];
@@ -2468,6 +2498,15 @@ export default function App() {
     ? "dashboard"
     : initial.view || "dashboard";
   const [view, setView] = useState(normalizedInitialView);
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [menuOpen]);
   const [currentStudyDayKey, setCurrentStudyDayKey] = useState(
     initial.currentStudyDayKey || TODAY_DAY_KEY,
   );
@@ -2906,6 +2945,13 @@ export default function App() {
     questionCarryovers,
     settings.studyStartDate,
   ]);
+  const availableScheduleWeeks = useMemo(() => {
+    const highestWeek = weeklySchedule.reduce(
+      (highest, item) => Math.max(highest, Number(item.week) || 1),
+      Math.max(12, Number(currentStudyWeek) || 1),
+    );
+    return Array.from({ length: highestWeek }, (_, index) => index + 1);
+  }, [weeklySchedule, currentStudyWeek]);
 
   const roadmapStats = useMemo(() => {
     const topics = roadmap.flatMap((subject) =>
@@ -3682,9 +3728,12 @@ export default function App() {
   const scheduleSubjectFrequency = useMemo(() => {
     const studyItems = scheduleWeekItems.filter(
       (item) =>
-        !["questoes", "simulado", "caderno_erros", "planejamento"].includes(
-          item.subjectId,
-        ),
+        ![
+          "questoes",
+          "simulado",
+          "caderno_erros",
+          "planejamento",
+        ].includes(item.subjectId),
     );
     return subjectsList.map((subject) => {
       const items = studyItems.filter((item) => item.subjectId === subject.id);
@@ -4094,14 +4143,25 @@ export default function App() {
 
   const completedStudyHistory = useMemo(() => {
     const source = mergeUniqueScheduleItems(weeklySchedule, schedule);
-    return source
+    const completedItems = source.filter(
+      (item) =>
+        item.status === "concluido" &&
+        ![
+          "questoes",
+          "simulado",
+          "caderno_erros",
+          "planejamento",
+        ].includes(item.subjectId),
+    );
+    const completedSourceIds = new Set(
+      completedItems.filter((item) => !item.carryover).map((item) => item.id),
+    );
+    return completedItems
       .filter(
         (item) =>
-          item.status === "concluido" &&
-          !item.carryover &&
-          !["questoes", "simulado", "caderno_erros", "planejamento"].includes(
-            item.subjectId,
-          ),
+          !item.carryover ||
+          !item.carryoverSourceId ||
+          !completedSourceIds.has(item.carryoverSourceId),
       )
       .map((item) => ({
         ...item,
@@ -4133,9 +4193,12 @@ export default function App() {
         .filter(
           (item) =>
             item.status !== "concluido" &&
-            !["questoes", "simulado", "caderno_erros", "planejamento"].includes(
-              item.subjectId,
-            ),
+            ![
+              "questoes",
+              "simulado",
+              "caderno_erros",
+              "planejamento",
+            ].includes(item.subjectId),
         )
         .sort(
           (a, b) => Number(Boolean(b.carryover)) - Number(Boolean(a.carryover)),
@@ -4240,6 +4303,19 @@ export default function App() {
   }
 
   function generateWeeklySchedule(configOverride = scheduleConfig) {
+    const activeCyclePendencies = pendingStudyItemsForCycle(currentStudyWeek);
+    if (weeklySchedule.length && activeCyclePendencies.length) {
+      openConfirmDialog({
+        title: "Ciclo atual ainda não concluído",
+        message:
+          "O cronograma não pode ser regenerado enquanto houver matérias pendentes no ciclo atual. Conclua essas matérias antes de liberar novos assuntos.",
+        confirmLabel: "Entendi",
+        cancelLabel: "Fechar",
+        tone: "amber",
+        onConfirm: () => {},
+      });
+      return;
+    }
     const targetConfig = {
       ...defaultScheduleConfig(),
       ...(configOverride || {}),
@@ -4527,6 +4603,18 @@ export default function App() {
       : Number(scheduleWeekFilter),
   ) {
     const targetWeek = Number(week) || effectiveCycleWeek;
+    if (isCycleBlockedForEditing(targetWeek)) {
+      openConfirmDialog({
+        title: "Próximo ciclo bloqueado",
+        message:
+          "Só é possível preparar o próximo ciclo. Conclua todas as matérias do ciclo atual antes de liberar novos assuntos.",
+        confirmLabel: "Entendi",
+        cancelLabel: "Fechar",
+        tone: "amber",
+        onConfirm: () => {},
+      });
+      return;
+    }
     setManualScheduleWeek(targetWeek);
     setManualScheduleDraft(draftFromWeek(targetWeek));
     setManualScheduleMessage("");
@@ -4593,6 +4681,18 @@ export default function App() {
   }
 
   function applyPerformanceSuggestionToManualDraft() {
+    if (isCycleBlockedForEditing(manualScheduleWeek)) {
+      openConfirmDialog({
+        title: "Próximo ciclo bloqueado",
+        message:
+          "Só é possível sugerir o próximo ciclo depois que todas as matérias do ciclo atual forem concluídas.",
+        confirmLabel: "Entendi",
+        cancelLabel: "Fechar",
+        tone: "amber",
+        onConfirm: () => {},
+      });
+      return;
+    }
     const hasPerformanceData =
       questionSessions.length > 0 || errors.length > 0 || reviews.length > 0;
     setManualScheduleDraft(suggestedManualDraftForWeek(manualScheduleWeek));
@@ -4690,6 +4790,18 @@ export default function App() {
   }
 
   function saveManualSchedule() {
+    if (isCycleBlockedForEditing(manualScheduleWeek)) {
+      openConfirmDialog({
+        title: "Próximo ciclo bloqueado",
+        message:
+          "Só é possível salvar o próximo ciclo depois que todas as matérias do ciclo atual forem concluídas.",
+        confirmLabel: "Entendi",
+        cancelLabel: "Fechar",
+        tone: "amber",
+        onConfirm: () => {},
+      });
+      return;
+    }
     const newWeekItems = buildManualWeeklyItems(
       manualScheduleWeek,
       manualScheduleDraft,
@@ -4785,6 +4897,61 @@ export default function App() {
     );
   }
 
+  function pendingStudyItemsForCycle(week) {
+    const items = mergeUniqueScheduleItems(effectiveWeeklySchedule, schedule);
+    const completedRoots = new Set(
+      items
+        .filter(
+          (item) =>
+            Number(item.week) === Number(week) &&
+            item.status === "concluido" &&
+            !isSundayFixedBlock(item) &&
+            ![
+              "questoes",
+              "simulado",
+              "caderno_erros",
+              "planejamento",
+            ].includes(item.subjectId),
+        )
+        .map((item) => item.carryoverSourceId || item.id),
+    );
+    const pendingByRoot = new Map();
+    items.forEach((item) => {
+      const belongsToCycle =
+        Number(item.week) === Number(week) ||
+        (item.carryover &&
+          Number(item.carryoverSourceWeek) === Number(week));
+      if (
+        !belongsToCycle ||
+        item.status === "concluido" ||
+        isSundayFixedBlock(item) ||
+        [
+          "questoes",
+          "simulado",
+          "caderno_erros",
+          "planejamento",
+        ].includes(item.subjectId)
+      )
+        return;
+      const rootId = item.carryoverSourceId || item.id;
+      if (completedRoots.has(rootId)) return;
+      const previous = pendingByRoot.get(rootId);
+      if (!previous || (item.carryover && !previous.carryover))
+        pendingByRoot.set(rootId, item);
+    });
+    return [...pendingByRoot.values()];
+  }
+
+  function isCycleBlockedForEditing(targetWeek) {
+    const activeWeek = Number(currentStudyWeek) || 1;
+    const requestedWeek = Number(targetWeek) || activeWeek;
+    return (
+      requestedWeek > activeWeek + 1 ||
+      (requestedWeek > activeWeek &&
+        pendingStudyItemsForCycle(activeWeek).length > 0)
+    );
+  }
+
   function moveStudyToNextDay() {
     const sourceDayKey =
       schedule.find((item) => item.dayKey)?.dayKey ||
@@ -4797,22 +4964,34 @@ export default function App() {
     );
     const targetDayKey = nextStudyDayKey(sourceDayKey);
     const targetWeek =
-      sourceDayKey === "sabado" && targetDayKey === "segunda"
-        ? Math.min(12, sourceWeek + 1)
+      sourceDayKey === "domingo" && targetDayKey === "segunda"
+        ? sourceWeek + 1
         : sourceWeek;
-    const pendingCount = schedule.filter(
-      (item) =>
-        item.status !== "concluido" &&
-        !["questoes", "simulado", "caderno_erros", "planejamento"].includes(
-          item.subjectId,
-        ),
-    ).length;
+    const pendingCount =
+      sourceDayKey === "domingo"
+        ? pendingStudyItemsForCycle(sourceWeek).length
+        : schedule.filter(
+            (item) =>
+              item.status !== "concluido" &&
+              ![
+                "questoes",
+                "simulado",
+                "caderno_erros",
+                "planejamento",
+              ].includes(item.subjectId),
+          ).length;
 
     openConfirmDialog({
-      title: "Mudar para o próximo dia?",
-      message: pendingCount
-        ? `Os ${pendingCount} bloco(s) não concluído(s) vão entrar no próximo dia como "Pendente do dia anterior". ${dailyQuestionGoalReport.missingQuestions > 0 ? `Também serão levadas ${dailyQuestionGoalReport.missingQuestions} questão(ões) pendente(s) para a meta do próximo dia.` : ""}`
-        : `O sistema vai carregar o próximo dia de estudo do cronograma. ${dailyQuestionGoalReport.missingQuestions > 0 ? `Também serão levadas ${dailyQuestionGoalReport.missingQuestions} questão(ões) pendente(s) para a meta do próximo dia.` : ""}`,
+      title:
+        sourceDayKey === "domingo" && pendingCount
+          ? "Encerrar o ciclo?"
+          : "Mudar para o próximo dia?",
+      message:
+        sourceDayKey === "domingo" && pendingCount
+          ? `Ainda há ${pendingCount} matéria(s) ou pendência(s) em aberto. O próximo ciclo só será liberado depois que todas forem concluídas.`
+          : pendingCount
+            ? `Os ${pendingCount} bloco(s) não concluído(s) vão entrar no próximo dia como "Pendente do dia anterior". ${dailyQuestionGoalReport.missingQuestions > 0 ? `Também serão levadas ${dailyQuestionGoalReport.missingQuestions} questão(ões) pendente(s) para a meta do próximo dia.` : ""}`
+            : `O sistema vai carregar o próximo dia de estudo do cronograma. ${dailyQuestionGoalReport.missingQuestions > 0 ? `Também serão levadas ${dailyQuestionGoalReport.missingQuestions} questão(ões) pendente(s) para a meta do próximo dia.` : ""}`,
       confirmLabel: "Sim",
       cancelLabel: "Não",
       tone: "amber",
@@ -4826,47 +5005,357 @@ export default function App() {
     });
   }
 
+  function reflowScheduleWithPending(
+    sourceWeeklySchedule,
+    targetWeek,
+    targetDayKey,
+    incomingPendencies = [],
+    questionCarryoversOverride = questionCarryovers,
+  ) {
+    const slotsPerDay = subjectsPerDaySlots();
+    const days = WEEK_DAYS.map(([dayKey]) => dayKey);
+    const startDayIndex = days.indexOf(targetDayKey);
+    const normalizedSchedule = normalizeScheduleItems(
+      sourceWeeklySchedule,
+      scheduleConfig,
+    );
+    const activeRoots = new Set(
+      incomingPendencies.map((item) => item.carryoverSourceId || item.id),
+    );
+    const seenCarryoverRoots = new Set();
+    const plannedItems = normalizedSchedule
+      .filter((item) => {
+        if (!item.carryover) return true;
+        const rootId = item.carryoverSourceId || item.id;
+        if (activeRoots.has(rootId)) return false;
+        const key = `${rootId}-${item.week}-${item.dayKey}`;
+        if (seenCarryoverRoots.has(key)) return false;
+        seenCarryoverRoots.add(key);
+        return true;
+      })
+      .map((item) => {
+        if (
+          Number(item.week) !== Number(targetWeek) ||
+          item.dayKey !== targetDayKey
+        )
+          return item;
+        const saved = schedule.find(
+          (current) =>
+            current.id === item.id ||
+            (current.week === item.week &&
+              current.dayKey === item.dayKey &&
+              current.subjectId === item.subjectId &&
+              current.topicId === item.topicId &&
+              Boolean(current.carryover) === Boolean(item.carryover)),
+        );
+        return saved
+          ? {
+              ...item,
+              status: saved.status,
+              elapsedSeconds: liveElapsedSeconds(saved),
+              timerStartedAt: saved.timerStartedAt || null,
+              baseElapsedSeconds:
+                saved.baseElapsedSeconds || saved.elapsedSeconds || 0,
+            }
+          : item;
+      });
+    const itemsByDate = new Map();
+    plannedItems.forEach((item) => {
+      const key = `${Number(item.week)}-${item.dayKey}`;
+      if (!itemsByDate.has(key)) itemsByDate.set(key, []);
+      itemsByDate.get(key).push(item);
+    });
+
+    const carryQueue = incomingPendencies.map((item) => {
+      const rootId = item.carryoverSourceId || item.id;
+      const carryoverCount =
+        Number(item.carryoverCount || 0) + (targetDayKey === "domingo" ? 0 : 1);
+      return {
+        ...item,
+        id: `carry-${rootId}-to-w${targetWeek}-${targetDayKey}`,
+        week: targetWeek,
+        dayKey: targetDayKey,
+        dayLabel: dayLabel(targetDayKey),
+        carryover: true,
+        carryoverSourceId: rootId,
+        carryoverSourceWeek: item.carryoverSourceWeek ?? item.week,
+        carryoverSourceDay: item.carryoverSourceDay || item.dayKey,
+        carryoverCount,
+        carryoverMandatory: carryoverCount >= 3,
+        carryoverFrom: item.carryoverFrom || dayLabel(item.dayKey),
+        carryoverLabel:
+          targetDayKey === "domingo"
+            ? "Pendência final do ciclo"
+            : carryoverCount >= 3
+              ? "Pendente obrigatória"
+              : "Pendente de dia anterior",
+        status: "pendente",
+        elapsedSeconds: liveElapsedSeconds(item),
+        baseElapsedSeconds: liveElapsedSeconds(item),
+        timerStartedAt: null,
+        completedAt: null,
+      };
+    });
+    const reflowedItems = plannedItems.filter(
+      (item) =>
+        Number(item.week) < targetWeek ||
+        (Number(item.week) === targetWeek &&
+          days.indexOf(item.dayKey) < startDayIndex),
+    );
+
+    const week = Number(targetWeek);
+    for (let dayIndex = startDayIndex; dayIndex < days.length; dayIndex += 1) {
+        const dayKey = days[dayIndex];
+        const dateKey = `${week}-${dayKey}`;
+        const dayItems = itemsByDate.get(dateKey) || [];
+        const fixedItems = dayItems.filter(
+          (item) =>
+            item.status === "concluido" ||
+            (dayKey === "domingo" && isSundayFixedBlock(item)),
+        );
+        const pendingItems = dayItems.filter(
+          (item) =>
+            item.status !== "concluido" &&
+            !(dayKey === "domingo" && isSundayFixedBlock(item)),
+        );
+        const candidates = [...carryQueue, ...pendingItems];
+        carryQueue.length = 0;
+
+        const uniqueCandidates = [
+          ...new Map(
+            candidates.map((item) => [
+              item.carryoverSourceId || item.id,
+              item,
+            ]),
+          ).values(),
+        ];
+        uniqueCandidates.sort((a, b) => {
+          const aCount = Number(a.carryoverCount || 0);
+          const bCount = Number(b.carryoverCount || 0);
+          const aSubject = getSubject(roadmap, a.subjectId);
+          const bSubject = getSubject(roadmap, b.subjectId);
+          const aTopic = getTopic(roadmap, a.subjectId, a.topicId);
+          const bTopic = getTopic(roadmap, b.subjectId, b.topicId);
+          return (
+            Number(Boolean(b.carryover)) - Number(Boolean(a.carryover)) ||
+            Number(Boolean(b.carryoverMandatory || bCount >= 3)) -
+              Number(Boolean(a.carryoverMandatory || aCount >= 3)) ||
+            bCount - aCount ||
+            topicPriorityValue(bTopic) - topicPriorityValue(aTopic) ||
+            Number(bSubject?.weight || 0) - Number(aSubject?.weight || 0) ||
+            String(a.subject).localeCompare(String(b.subject), "pt-BR")
+          );
+        });
+
+        const availableSlots = Math.max(
+          0,
+          slotsPerDay -
+            fixedItems.filter(
+              (item) =>
+                !isSundayFixedBlock(item) &&
+                ![
+                  "questoes",
+                  "simulado",
+                  "caderno_erros",
+                  "planejamento",
+                ].includes(item.subjectId),
+            ).length,
+        );
+        const selectedItems = uniqueCandidates.slice(0, availableSlots);
+        const displacedItems = uniqueCandidates.slice(availableSlots);
+
+        selectedItems.forEach((item) => {
+          const moved =
+            Number(item.week) !== week || item.dayKey !== dayKey;
+          const elapsed = liveElapsedSeconds(item);
+          reflowedItems.push({
+            ...item,
+            week,
+            dayKey,
+            dayLabel: dayLabel(dayKey),
+            status: moved ? "pendente" : item.status,
+            elapsedSeconds: elapsed,
+            baseElapsedSeconds: elapsed,
+            timerStartedAt: moved ? null : item.timerStartedAt || null,
+          });
+        });
+        fixedItems.forEach((item) => reflowedItems.push(item));
+
+        if (displacedItems.length) {
+          const nextDayIndex = (dayIndex + 1) % days.length;
+          const nextWeek = week;
+          displacedItems.forEach((item) => {
+            const carryoverCount =
+              Number(item.carryoverCount || 0) +
+              (dayIndex === days.length - 1 ? 0 : 1);
+            carryQueue.push({
+              ...item,
+              week: nextWeek,
+              dayKey: days[nextDayIndex],
+              dayLabel: dayLabel(days[nextDayIndex]),
+              carryover: true,
+              carryoverSourceId: item.carryoverSourceId || item.id,
+              carryoverSourceWeek:
+                item.carryoverSourceWeek ?? item.week,
+              carryoverSourceDay: item.carryoverSourceDay || item.dayKey,
+              carryoverCount,
+              carryoverMandatory: carryoverCount >= 3,
+              carryoverFrom: dayLabel(dayKey),
+              carryoverLabel:
+                carryoverCount >= 3
+                  ? "Pendente obrigatória"
+                  : "Pendente de dia anterior",
+              status: "pendente",
+              elapsedSeconds: liveElapsedSeconds(item),
+              baseElapsedSeconds: liveElapsedSeconds(item),
+              timerStartedAt: null,
+              completedAt: null,
+            });
+          });
+        }
+      }
+
+    if (carryQueue.length) {
+      carryQueue.forEach((item) =>
+        reflowedItems.push({
+          ...item,
+          week,
+          dayKey: "domingo",
+          dayLabel: dayLabel("domingo"),
+          carryover: true,
+          carryoverLabel: "Pendência final do ciclo",
+          status: "pendente",
+        }),
+      );
+    }
+
+    const nextWeeklySchedule = withDistributedQuestionTargets(
+      reflowedItems,
+      scheduleConfig,
+      roadmap,
+      {
+        questionCarryovers: questionCarryoversOverride,
+        studyStartDate: settings.studyStartDate,
+      },
+    );
+    return {
+      weeklySchedule: nextWeeklySchedule,
+      todaySchedule: scheduleFromWeekly(
+        nextWeeklySchedule,
+        roadmap,
+        targetWeek,
+        targetDayKey,
+      ),
+    };
+  }
+
   function moveStudyToNextDayNow(
     sourceDayKey,
     sourceWeek,
     targetDayKey,
     targetWeek,
   ) {
+    const finalDayPendencies =
+      sourceDayKey === "domingo" && targetWeek > sourceWeek
+        ? pendingStudyItemsForCycle(sourceWeek)
+        : [];
+    if (finalDayPendencies.length) {
+      if (activeTimerRef.current) {
+        activeTimerRef.current = null;
+        setActiveBlockId(null);
+      }
+      const pendingRoots = new Set(
+        finalDayPendencies.map((item) => item.carryoverSourceId || item.id),
+      );
+      const finalSundayItems = finalDayPendencies.map((item) => {
+        const rootId = item.carryoverSourceId || item.id;
+        const elapsed = liveElapsedSeconds(item);
+        return {
+          ...item,
+          id: `cycle-final-w${sourceWeek}-${rootId}`,
+          week: sourceWeek,
+          dayKey: "domingo",
+          dayLabel: dayLabel("domingo"),
+          carryover: true,
+          carryoverSourceId: rootId,
+          carryoverSourceWeek: sourceWeek,
+          carryoverSourceDay: item.carryoverSourceDay || item.dayKey,
+          carryoverLabel: "Pendência final do ciclo",
+          status: "pendente",
+          elapsedSeconds: elapsed,
+          baseElapsedSeconds: elapsed,
+          timerStartedAt: null,
+          completedAt: null,
+        };
+      });
+      const preservedSundayItems = scheduleFromWeekly(
+        effectiveWeeklySchedule,
+        roadmap,
+        sourceWeek,
+        "domingo",
+      ).filter(
+        (item) => item.status === "concluido" || isSundayFixedBlock(item),
+      );
+      setWeeklySchedule((current) => [
+        ...current.filter((item) => {
+          const rootId = item.carryoverSourceId || item.id;
+          const isPendingSundaySource =
+            Number(item.week) === Number(sourceWeek) &&
+            item.dayKey === "domingo" &&
+            pendingRoots.has(rootId);
+          const isOldCarryover = item.carryover && pendingRoots.has(rootId);
+          return !isPendingSundaySource && !isOldCarryover;
+        }),
+        ...finalSundayItems,
+      ]);
+      setCurrentStudyDayKey("domingo");
+      setCurrentStudyWeek(sourceWeek);
+      setWeeklyDayFilter("domingo");
+      setWeeklyWeekFilter(sourceWeek);
+      setSchedule([...preservedSundayItems, ...finalSundayItems]);
+      setQuestionsExcusedToday(0);
+      setView("today");
+      openConfirmDialog({
+        title: "Ciclo atual ainda não concluído",
+        message: `${finalSundayItems.length} matéria(s) ou pendência(s) ainda precisam ser concluídas. O Ciclo ${sourceWeek + 1} permanece bloqueado. Conclua todas as pendências deste ciclo para avançar.`,
+        confirmLabel: "Continuar no domingo",
+        cancelLabel: "Fechar",
+        tone: "amber",
+        onConfirm: () => {},
+      });
+      return;
+    }
+    if (sourceDayKey === "domingo" && targetWeek > 12) {
+      openConfirmDialog({
+        title: "Ciclos concluídos",
+        message:
+          "Os 12 ciclos do cronograma foram concluídos. Gere um novo cronograma para iniciar outra sequência de estudos.",
+        confirmLabel: "Entendi",
+        cancelLabel: "Fechar",
+        tone: "green",
+        onConfirm: () => {},
+      });
+      return;
+    }
+
     if (activeTimerRef.current) {
       activeTimerRef.current = null;
       setActiveBlockId(null);
     }
 
-    const targetBaseSchedule = scheduleFromWeekly(
-      effectiveWeeklySchedule,
-      roadmap,
-      targetWeek,
-      targetDayKey,
-    );
-
     const carryovers = schedule
       .filter(
         (item) =>
           item.status !== "concluido" &&
-          !["questoes", "simulado", "caderno_erros", "planejamento"].includes(
-            item.subjectId,
-          ),
+          ![
+            "questoes",
+            "simulado",
+            "caderno_erros",
+            "planejamento",
+          ].includes(item.subjectId),
       )
       .map((item) => ({
         ...item,
-        id: `carry-manual-w${sourceWeek}-${sourceDayKey}-to-w${targetWeek}-${targetDayKey}-${item.subjectId}-${item.topicId || item.id}`,
-        week: targetWeek,
-        dayKey: targetDayKey,
-        dayLabel: dayLabel(targetDayKey),
-        carryover: true,
-        carryoverFrom: "dia anterior",
-        carryoverOriginalDay: dayLabel(sourceDayKey),
-        carryoverLabel: "Pendente do dia anterior",
-        status: "pendente",
-        elapsedSeconds: 0,
-        baseElapsedSeconds: 0,
-        timerStartedAt: null,
-        completedAt: null,
       }));
 
     const targetDate = isoDateForCycleWeekDay(
@@ -4905,45 +5394,22 @@ export default function App() {
       ];
     })();
 
-    const nextSchedule = withDistributedQuestionTargets(
-      mergeUniqueScheduleItems(targetBaseSchedule, carryovers),
-      scheduleConfig,
-      roadmap,
-      {
-        questionCarryovers: nextQuestionCarryovers,
-        studyStartDate: settings.studyStartDate,
-      },
-    ).sort(
-      (a, b) => Number(Boolean(b.carryover)) - Number(Boolean(a.carryover)),
+    const redistributed = reflowScheduleWithPending(
+      effectiveWeeklySchedule,
+      targetWeek,
+      targetDayKey,
+      carryovers,
+      nextQuestionCarryovers,
     );
 
     setQuestionCarryovers(nextQuestionCarryovers);
-    setWeeklySchedule((current) => {
-      const withoutOldTargetDay = normalizeScheduleItems(
-        current,
-        scheduleConfig,
-      ).filter(
-        (item) =>
-          !(
-            Number(item.week) === Number(targetWeek) &&
-            item.dayKey === targetDayKey
-          ),
-      );
-      const updated = mergeUniqueScheduleItems(
-        withoutOldTargetDay,
-        nextSchedule,
-      );
-      return withDistributedQuestionTargets(updated, scheduleConfig, roadmap, {
-        questionCarryovers: nextQuestionCarryovers,
-        studyStartDate: settings.studyStartDate,
-      });
-    });
+    setWeeklySchedule(redistributed.weeklySchedule);
 
     setCurrentStudyDayKey(targetDayKey);
     setCurrentStudyWeek(targetWeek);
     setWeeklyDayFilter(targetDayKey);
     setWeeklyWeekFilter(targetWeek);
-    setSchedule(nextSchedule);
+    setSchedule(redistributed.todaySchedule);
     setQuestionsExcusedToday(0);
     setView("today");
   }
@@ -4952,6 +5418,17 @@ export default function App() {
     const targetDayKey = currentStudyDayKey || TODAY_DAY_KEY;
     const targetWeek = Number(currentStudyWeek || effectiveCycleWeek || 1);
     const sourceDayKey = previousStudyDayKey(targetDayKey);
+    if (!sourceDayKey) {
+      openConfirmDialog({
+        title: "Nenhuma pendência anterior",
+        message: "Não há um dia de estudo anterior neste ciclo para recuperar.",
+        confirmLabel: "Entendi",
+        cancelLabel: "Fechar",
+        tone: "stone",
+        onConfirm: () => {},
+      });
+      return;
+    }
     const sourceWeek =
       targetDayKey === "segunda" ? Math.max(1, targetWeek - 1) : targetWeek;
 
@@ -4963,10 +5440,29 @@ export default function App() {
         Number(item.week) === Number(sourceWeek) &&
         item.dayKey === sourceDayKey &&
         item.status !== "concluido" &&
-        !item.carryover &&
-        !["questoes", "simulado", "caderno_erros", "planejamento"].includes(
-          item.subjectId,
-        ),
+        ![
+          "questoes",
+          "simulado",
+          "caderno_erros",
+          "planejamento",
+        ].includes(item.subjectId),
+    );
+    const activeCarryoverSources = new Set(
+      effectiveWeeklySchedule
+        .filter((item) => item.carryover && item.status !== "concluido")
+        .map((item) => item.carryoverSourceId || item.id),
+    );
+    const uniquePreviousItems = [
+      ...new Map(
+        previousItems.map((item) => [
+          item.carryoverSourceId || item.id,
+          item,
+        ]),
+      ).values(),
+    ].filter(
+      (item) =>
+        !activeCarryoverSources.has(item.carryoverSourceId || item.id) ||
+        item.carryover,
     );
 
     const missingQuestionsToCarry = Math.max(
@@ -4974,7 +5470,7 @@ export default function App() {
       Number(previousDayQuestionGoalReport?.missingQuestions || 0),
     );
 
-    if (!previousItems.length && missingQuestionsToCarry <= 0) {
+    if (!uniquePreviousItems.length && missingQuestionsToCarry <= 0) {
       openConfirmDialog({
         title: "Nada para resgatar",
         message:
@@ -4989,13 +5485,13 @@ export default function App() {
 
     openConfirmDialog({
       title: "Resgatar pendências para hoje?",
-      message: `${previousItems.length ? `${previousItems.length} bloco(s) pendente(s) de ${dayLabel(sourceDayKey)} serão adicionados ao estudo de hoje.` : "Nenhum bloco pendente encontrado."} ${missingQuestionsToCarry > 0 ? `${missingQuestionsToCarry} questão(ões) faltante(s) também serão somadas à meta de hoje.` : ""}`,
+      message: `${uniquePreviousItems.length ? `${uniquePreviousItems.length} bloco(s) pendente(s) de ${dayLabel(sourceDayKey)} serão priorizados no limite normal de matérias por dia. O que não couber será reorganizado nos próximos dias, incluindo domingo se necessário.` : "Nenhum bloco pendente encontrado."} ${missingQuestionsToCarry > 0 ? `${missingQuestionsToCarry} questão(ões) faltante(s) também serão somadas à meta de hoje.` : ""}`,
       confirmLabel: "Resgatar",
       cancelLabel: "Cancelar",
       tone: "amber",
       onConfirm: () =>
         rescuePreviousDayPendenciesNow(
-          previousItems,
+          uniquePreviousItems,
           sourceDayKey,
           sourceWeek,
           targetDayKey,
@@ -5024,23 +5520,6 @@ export default function App() {
       settings.studyStartDate,
     );
 
-    const carryovers = previousItems.map((item) => ({
-      ...item,
-      id: `carry-rescue-w${sourceWeek}-${sourceDayKey}-to-w${targetWeek}-${targetDayKey}-${item.subjectId}-${item.topicId || item.id}`,
-      week: targetWeek,
-      dayKey: targetDayKey,
-      dayLabel: dayLabel(targetDayKey),
-      carryover: true,
-      carryoverFrom: "dia anterior",
-      carryoverOriginalDay: dayLabel(sourceDayKey),
-      carryoverLabel: "Pendente do dia anterior",
-      status: "pendente",
-      elapsedSeconds: 0,
-      baseElapsedSeconds: 0,
-      timerStartedAt: null,
-      completedAt: null,
-    }));
-
     const nextQuestionCarryovers = (() => {
       const normalized = normalizeQuestionCarryovers(questionCarryovers);
       const withoutSameSource = normalized.filter(
@@ -5064,46 +5543,21 @@ export default function App() {
       ];
     })();
 
-    const mergedToday = mergeUniqueScheduleItems(schedule, carryovers).sort(
-      (a, b) => Number(Boolean(b.carryover)) - Number(Boolean(a.carryover)),
+    const redistributed = reflowScheduleWithPending(
+      effectiveWeeklySchedule,
+      targetWeek,
+      targetDayKey,
+      previousItems,
+      nextQuestionCarryovers,
     );
 
-    const redistributedToday = withDistributedQuestionTargets(
-      mergedToday,
-      scheduleConfig,
-      roadmap,
-      {
-        questionCarryovers: nextQuestionCarryovers,
-        studyStartDate: settings.studyStartDate,
-      },
-    );
-
+    if (activeTimerRef.current) {
+      activeTimerRef.current = null;
+      setActiveBlockId(null);
+    }
     setQuestionCarryovers(nextQuestionCarryovers);
-    setSchedule(redistributedToday);
-    setWeeklySchedule((current) => {
-      const base = normalizeScheduleItems(current, scheduleConfig).filter(
-        (item) =>
-          !(
-            Number(item.week) === Number(targetWeek) &&
-            item.dayKey === targetDayKey &&
-            carryovers.some(
-              (carry) =>
-                carry.subjectId === item.subjectId &&
-                (carry.topicId || carry.id) === (item.topicId || item.id) &&
-                Boolean(item.carryover),
-            )
-          ),
-      );
-      return withDistributedQuestionTargets(
-        mergeUniqueScheduleItems(base, redistributedToday),
-        scheduleConfig,
-        roadmap,
-        {
-          questionCarryovers: nextQuestionCarryovers,
-          studyStartDate: settings.studyStartDate,
-        },
-      );
-    });
+    setSchedule(redistributed.todaySchedule);
+    setWeeklySchedule(redistributed.weeklySchedule);
     setView("today");
   }
 
@@ -5189,34 +5643,21 @@ export default function App() {
         : completionBlock.topicId
           ? [completionBlock.topicId]
           : [];
-    const isSameCarryover = (item) =>
-      item.week === completionBlock.week &&
-      item.dayKey === completionBlock.dayKey &&
-      item.subjectId === completionBlock.subjectId &&
-      item.topicId === completionBlock.topicId &&
-      Boolean(item.carryover) === Boolean(completionBlock.carryover);
     const isSameBase = (item) =>
-      item.id === completionBlock.id || isSameCarryover(item);
-    const isSourceSaturdayBlock = (item) =>
-      completionBlock.carryover &&
-      completionBlock.carryoverFrom === "Sábado" &&
-      item.week === completionBlock.week - 1 &&
-      item.dayKey === "sabado" &&
-      item.subjectId === completionBlock.subjectId &&
-      item.topicId === completionBlock.topicId &&
-      !item.carryover;
-    const isLinkedCarryover = (item) =>
-      completionBlock.carryover &&
-      item.week === completionBlock.week &&
-      item.dayKey === completionBlock.dayKey &&
-      item.subjectId === completionBlock.subjectId &&
-      item.topicId === completionBlock.topicId &&
-      item.carryover;
+      item.id === completionBlock.id ||
+      (completionBlock.carryover &&
+        item.carryover &&
+        Boolean(completionBlock.carryoverSourceId) &&
+        item.carryoverSourceId === completionBlock.carryoverSourceId);
+    const isCarryoverSource = (item) =>
+      completionBlock.carryoverSourceId &&
+      item.id === completionBlock.carryoverSourceId &&
+      item.id !== completionBlock.id;
     activeTimerRef.current = null;
     setActiveBlockId(null);
     setSchedule((current) =>
       current.map((item) => {
-        if (!(isSameBase(item) || isLinkedCarryover(item))) return item;
+        if (!isSameBase(item)) return item;
         const elapsed = liveElapsedSeconds(item);
         return {
           ...item,
@@ -5231,7 +5672,7 @@ export default function App() {
     setWeeklySchedule((current) => {
       let foundCarryover = false;
       const next = current.map((item) => {
-        if (isSameBase(item) || isLinkedCarryover(item)) {
+        if (isSameBase(item)) {
           foundCarryover = true;
           const elapsed =
             item.id === completionBlock.id
@@ -5246,7 +5687,8 @@ export default function App() {
             baseElapsedSeconds: elapsed,
           };
         }
-        if (isSourceSaturdayBlock(item)) {
+        if (isCarryoverSource(item)) {
+          foundCarryover = true;
           const elapsed = liveElapsedSeconds(completionBlock);
           return {
             ...item,
@@ -6306,7 +6748,7 @@ export default function App() {
             typeof topic === "object" && topic !== null
               ? {
                   text: String(topic.text || "").trim(),
-                  priority: topic.priority || "Média",
+                  priority: normalizeTopicPriority(topic.priority),
                 }
               : { text: String(topic || "").trim(), priority: "Média" },
           )
@@ -6329,7 +6771,7 @@ export default function App() {
             id: `${subjectId}_${topicIndex + 1}`,
             title: topic.text,
             done: false,
-            priority: topic.priority || "Média",
+            priority: normalizeTopicPriority(topic.priority),
             difficulty: "Média",
           })),
         };
@@ -7059,9 +7501,7 @@ export default function App() {
             groupedSubjects.set(currentSubject, []);
           }
 
-          const priority = ["Alta", "Média", "Baixa"].includes(colD)
-            ? colD
-            : "Média";
+          const priority = normalizeTopicPriority(colD);
 
           groupedSubjects.get(currentSubject).push({ text: colC, priority });
         });
@@ -7652,36 +8092,39 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
-      <div className="sticky top-0 z-30 border-b border-stone-200/80 bg-white/95 p-3 shadow-sm backdrop-blur-xl md:hidden">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-900">
-              Militar
-            </p>
-            <p className="text-sm font-black text-stone-950">Navegação</p>
-          </div>
-          <Badge tone="amber">{stats.progress}%</Badge>
-        </div>
-
-        <nav className="mt-3 flex gap-2 overflow-x-auto pb-2">
-          {nav.map(([id, Icon, label]) => (
-            <button
-              key={id}
-              onClick={() => setView(id)}
-              className={cls(
-                "flex shrink-0 items-center gap-2 rounded-2xl px-3 py-2 text-xs font-bold transition",
-                view === id
-                  ? "bg-stone-950 text-white shadow-sm"
-                  : "bg-stone-100 text-stone-700 hover:bg-stone-200",
-              )}
-            >
-              <Icon size={15} />
-              {label}
-            </button>
-          ))}
-        </nav>
-      </div>
-      <aside className="fixed left-0 top-0 z-20 hidden h-dvh w-64 flex-col overflow-y-auto overscroll-contain border-r border-stone-200/80 bg-white/90 p-4 backdrop-blur-xl md:flex xl:w-72 xl:p-5">
+      {menuOpen && (
+        <button
+          type="button"
+          aria-label="Fechar menu"
+          onClick={() => setMenuOpen(false)}
+          className="fixed inset-0 z-30 cursor-default bg-stone-950/30 backdrop-blur-[1px]"
+        />
+      )}
+      <button
+        type="button"
+        onClick={() => setMenuOpen((open) => !open)}
+        aria-label={menuOpen ? "Fechar menu" : "Abrir menu"}
+        aria-expanded={menuOpen}
+        aria-controls="main-navigation"
+        className={cls(
+          "fixed top-4 z-50 flex h-11 w-12 items-center justify-center border border-stone-200 text-stone-700 shadow-md backdrop-blur-xl transition-all duration-200 hover:bg-amber-50 hover:text-stone-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700",
+          menuOpen
+            ? "left-64 rounded-l-none rounded-r-xl border-l-0 bg-white xl:left-72"
+            : "left-0 rounded-r-xl border-l-0 bg-white/95",
+        )}
+      >
+        {menuOpen ? <X size={20} /> : <Menu size={20} />}
+      </button>
+      <aside
+        id="main-navigation"
+        aria-label="Navegação principal"
+        aria-hidden={!menuOpen}
+        inert={!menuOpen}
+        className={cls(
+          "fixed left-0 top-0 z-40 flex h-dvh w-64 flex-col overflow-y-auto overscroll-contain border-r border-stone-200/80 bg-white/95 p-4 shadow-xl backdrop-blur-xl transition-transform duration-200 xl:w-72 xl:p-5",
+          menuOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
         <div className="rounded-3xl bg-gradient-to-br from-stone-950 via-stone-800 to-amber-950 p-5 text-white shadow-lg">
           <div className="flex items-center gap-3">
             <div className="rounded-2xl bg-white/10 p-3">
@@ -7711,7 +8154,10 @@ export default function App() {
           {nav.map(([id, Icon, label]) => (
             <button
               key={id}
-              onClick={() => setView(id)}
+              onClick={() => {
+                setView(id);
+                setMenuOpen(false);
+              }}
               className={cls(
                 "flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm font-semibold transition xl:px-4 xl:py-3",
                 view === id
@@ -7724,10 +8170,10 @@ export default function App() {
           ))}
         </nav>
       </aside>
-      <main className="p-4 md:ml-64 md:p-6 xl:ml-72 xl:p-8">
+      <main className="p-4 md:p-6 xl:p-8">
         <div className="mx-auto max-w-7xl space-y-6">
-          <header className="flex flex-col gap-4 rounded-3xl border border-stone-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-xl md:flex-row md:items-center md:justify-between">
-            <div>
+          <header className="flex flex-col gap-4 rounded-3xl border border-stone-200/80 bg-white/80 p-5 pl-16 shadow-sm backdrop-blur-xl md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0">
               <p className="text-sm font-semibold text-amber-900">
                 {TODAY_LABEL}
               </p>
@@ -8155,7 +8601,7 @@ export default function App() {
                       onClick={rescuePreviousDayPendencies}
                       className="rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm font-black text-amber-800 shadow-sm hover:bg-amber-50"
                     >
-                      Resgatar pendências para hoje
+                      Recuperar pendência anterior
                     </button>
                     <button
                       onClick={moveStudyToNextDay}
@@ -8193,7 +8639,7 @@ export default function App() {
                             }
                           >
                             {item.carryover
-                              ? "pendente do dia anterior"
+                              ? item.carryoverLabel || "pendente do dia anterior"
                               : item.status}
                           </Badge>
                           <Badge>{item.type}</Badge>
@@ -8216,8 +8662,9 @@ export default function App() {
                         </p>
                         {item.carryover && item.status !== "concluido" && (
                           <p className="mt-2 rounded-2xl bg-white/80 px-4 py-2 text-sm font-bold text-red-700">
-                            Pendente do dia anterior — concluir antes do estudo
-                            normal.
+                            Pendência priorizada antes dos blocos normais. Se
+                            continuar sem conclusão, ela ganha prioridade a
+                            cada adiamento até se tornar obrigatória.
                           </p>
                         )}
                         {item.carryover && item.status === "concluido" && (
@@ -8335,7 +8782,7 @@ export default function App() {
                     }
                     className="cursor-pointer rounded-2xl border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-100"
                   >
-                    {WEEK_NUMBERS.map((week) => (
+                    {availableScheduleWeeks.map((week) => (
                       <option key={week} value={week}>
                         Ciclo {week}
                       </option>
@@ -8477,7 +8924,7 @@ export default function App() {
                       Escolha o ciclo que deseja gerar ou visualizar.
                     </p>
                   </div>
-                  <div className="flex flex-col gap-2 sm:flex-row">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
                     <select
                       value={scheduleWeekFilter}
                       onChange={(event) =>
@@ -8504,12 +8951,18 @@ export default function App() {
                       className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold"
                     >
                       <option value="all">Todos os dias</option>
-                      {STUDY_DAYS.map((day) => (
+                      {WEEK_DAYS.map(([day]) => (
                         <option key={day} value={day}>
                           {dayLabel(day)}
                         </option>
                       ))}
                     </select>
+                    <button
+                      onClick={generateWeeklySchedule}
+                      className="rounded-2xl bg-stone-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-800"
+                    >
+                      <Zap size={16} className="inline" /> Gerar 12 ciclos
+                    </button>
                   </div>
                 </div>
               </Card>
@@ -8659,7 +9112,9 @@ export default function App() {
                                           )}
                                         </div>
                                         <p className="mt-2 text-sm font-black text-stone-950">
-                                          {item.subject}
+                                          {item.subjectId === "simulado"
+                                            ? "Simulado + Redação"
+                                            : item.subject}
                                         </p>
                                         <p className="mt-1 text-xs font-semibold leading-relaxed text-stone-600">
                                           {item.topic}
@@ -8708,7 +9163,7 @@ export default function App() {
                         }}
                         className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold"
                       >
-                        {WEEK_NUMBERS.map((week) => (
+                        {availableScheduleWeeks.map((week) => (
                           <option key={week} value={week}>
                             Ciclo {week}
                           </option>
@@ -9257,25 +9712,6 @@ export default function App() {
                   </div>
                 </Card>
               </div>
-              <Card className="p-5">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <h3 className="font-black">
-                      Gerar cronograma de 12 ciclos
-                    </h3>
-                    <p className="text-sm text-stone-500">
-                      A geração usa peso, cobertura de matérias, assuntos ainda
-                      não estudados e baixo desempenho em questões.
-                    </p>
-                  </div>
-                  <button
-                    onClick={generateWeeklySchedule}
-                    className="rounded-2xl bg-stone-950 px-5 py-3 font-semibold text-white"
-                  >
-                    <Zap size={16} className="inline" /> Gerar 12 ciclos
-                  </button>
-                </div>
-              </Card>
             </motion.section>
           )}
           {view === "subjects" && (
@@ -11993,7 +12429,7 @@ export default function App() {
                       }
                       className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold text-stone-700"
                     >
-                      {WEEK_NUMBERS.map((week) => (
+                      {availableScheduleWeeks.map((week) => (
                         <option key={week} value={week}>
                           Ciclo {week}
                         </option>
