@@ -356,6 +356,23 @@ function sumQuestionSessionsForDate(questionSessions = [], isoDate) {
   return { sessions, doneQuestions, correctQuestions };
 }
 
+function cycleDateRange(week, studyStartDate = DEFAULT_STUDY_START_DATE) {
+  const start = startOfDay(parseISODate(studyStartDate));
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  start.setDate(start.getDate() + (Math.max(1, Number(week) || 1) - 1) * 7);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  return { start, end };
+}
+
+function cycleWeekForDate(value, studyStartDate = DEFAULT_STUDY_START_DATE) {
+  const isoDate = isoDateFromAny(value);
+  if (!isoDate) return null;
+  const date = startOfDay(parseISODate(isoDate));
+  const { start } = cycleDateRange(1, studyStartDate);
+  return Math.floor((date - start) / (7 * 86400000)) + 1;
+}
+
 function uniqueStudyBlocksForTotals(...groups) {
   const map = new Map();
   groups
@@ -1137,6 +1154,305 @@ function mergeUniqueScheduleItems(baseItems, extraItems) {
   return merged;
 }
 
+function buildCyclePerformanceReport({
+  week,
+  weeklySchedule = [],
+  schedule = [],
+  questionSessions = [],
+  simulatedTests = [],
+  reviews = [],
+  roadmap = [],
+  studyStartDate = DEFAULT_STUDY_START_DATE,
+}) {
+  const cycleNumber = Number(week) || 1;
+  const allBlocks = mergeUniqueScheduleItems(weeklySchedule, schedule);
+  const cycleBlocks = allBlocks.filter(
+    (item) =>
+      Number(item.week) === cycleNumber ||
+      (item.carryover &&
+        Number(item.carryoverSourceWeek) === cycleNumber),
+  );
+  const blocksByRoot = new Map();
+  cycleBlocks.forEach((item) => {
+    const rootId = item.carryoverSourceId || item.id;
+    const current = blocksByRoot.get(rootId);
+    if (!current) {
+      blocksByRoot.set(rootId, { primary: item, elapsedSeconds: liveElapsedSeconds(item) });
+      return;
+    }
+    const itemIsSource = !item.carryover && Number(item.week) === cycleNumber;
+    const currentIsSource =
+      !current.primary.carryover &&
+      Number(current.primary.week) === cycleNumber;
+    blocksByRoot.set(rootId, {
+      primary: itemIsSource || !currentIsSource ? item : current.primary,
+      elapsedSeconds: Math.max(
+        current.elapsedSeconds,
+        liveElapsedSeconds(item),
+      ),
+    });
+  });
+  const uniqueBlocks = [...blocksByRoot.values()];
+  const subjectBlocks = uniqueBlocks
+    .map((entry) => entry.primary)
+    .filter(
+      (item) =>
+        item.subjectId &&
+        ![
+          "questoes",
+          "simulado",
+          "caderno_erros",
+          "planejamento",
+        ].includes(item.subjectId),
+    );
+  const blockById = new Map();
+  const blockWeekByRoot = new Map();
+  cycleBlocks.forEach((item) => {
+    blockById.set(item.id, item);
+    blockWeekByRoot.set(
+      item.carryoverSourceId || item.id,
+      Number(item.carryoverSourceWeek ?? item.week),
+    );
+  });
+  const { start, end } = cycleDateRange(cycleNumber, studyStartDate);
+  const sessionKey = (session) =>
+    session.id ||
+    `${session.sourceBlockId || ""}-${questionSessionISODate(session)}-${session.subjectId || ""}-${session.done || 0}-${session.correct || 0}`;
+  const seenSessions = new Set();
+  const cycleSessions = questionSessions.filter((session) => {
+    const key = sessionKey(session);
+    if (seenSessions.has(key)) return false;
+    seenSessions.add(key);
+    const sourceBlock = session.sourceBlockId
+      ? blockById.get(session.sourceBlockId)
+      : null;
+    if (sourceBlock) {
+      return (
+        Number(
+          blockWeekByRoot.get(
+            sourceBlock.carryoverSourceId || sourceBlock.id,
+          ),
+        ) === cycleNumber
+      );
+    }
+    const date = questionSessionISODate(session);
+    if (!date) return false;
+    const sessionDate = startOfDay(parseISODate(date));
+    return sessionDate >= start && sessionDate <= end;
+  });
+  const subjectById = new Map(
+    roadmap.map((subject) => [subject.id, subject.subject]),
+  );
+  const subjectRows = new Map();
+  subjectBlocks.forEach((item) => {
+    const row = subjectRows.get(item.subjectId) || {
+      subjectId: item.subjectId,
+      subject: item.subject || subjectById.get(item.subjectId) || "Matéria",
+      plannedQuestions: 0,
+      hasPlannedQuestions: false,
+      resolved: null,
+      correct: null,
+      wrong: null,
+      accuracy: null,
+      errorRate: null,
+    };
+    const planned = Number(item.questionsTarget);
+    if (Number.isFinite(planned) && planned > 0) {
+      row.plannedQuestions += planned;
+      row.hasPlannedQuestions = true;
+    }
+    subjectRows.set(item.subjectId, row);
+  });
+  let resolvedQuestions = 0;
+  let correctQuestions = 0;
+  let wrongQuestions = 0;
+  let hasQuestionResults = cycleSessions.length > 0;
+  let manuallyRecordedMinutes = 0;
+  cycleSessions.forEach((session) => {
+    const subjectId = session.subjectId;
+    if (!subjectId) return;
+    const row = subjectRows.get(subjectId) || {
+      subjectId,
+      subject: session.subject || subjectById.get(subjectId) || "Matéria",
+      plannedQuestions: 0,
+      hasPlannedQuestions: false,
+      resolved: null,
+      correct: null,
+      wrong: null,
+      accuracy: null,
+      errorRate: null,
+    };
+    const done = Math.max(
+      0,
+      Number(session.done || session.totalQuestions || session.feitas || 0),
+    );
+    const correct = Math.min(
+      done,
+      Math.max(
+        0,
+        Number(
+          session.correct ||
+            session.correctQuestions ||
+            session.acertos ||
+            0,
+        ),
+      ),
+    );
+    row.resolved = (row.resolved || 0) + done;
+    row.correct = (row.correct || 0) + correct;
+    row.wrong = (row.wrong || 0) + Math.max(0, done - correct);
+    if (
+      !session.sourceBlockId &&
+      session.source === "manual" &&
+      Number(session.time) > 0
+    )
+      manuallyRecordedMinutes += Number(session.time);
+    subjectRows.set(subjectId, row);
+    resolvedQuestions += done;
+    correctQuestions += correct;
+    wrongQuestions += Math.max(0, done - correct);
+  });
+  const cycleSimulatedTests = simulatedTests.filter((test) => {
+    const date = isoDateFromAny(test.date);
+    if (!date) return false;
+    const testDate = startOfDay(parseISODate(date));
+    return testDate >= start && testDate <= end;
+  });
+  cycleSimulatedTests.forEach((test) => {
+    const done = Math.max(0, Number(test.total || 0));
+    const correct = Math.min(done, Math.max(0, Number(test.correct || 0)));
+    resolvedQuestions += done;
+    correctQuestions += correct;
+    wrongQuestions += Math.max(0, done - correct);
+    hasQuestionResults = true;
+    Object.values(test.subjects || {}).forEach((subjectResult) => {
+      if (!subjectResult.subjectId) return;
+      const row = subjectRows.get(subjectResult.subjectId) || {
+        subjectId: subjectResult.subjectId,
+        subject:
+          subjectResult.subject ||
+          subjectById.get(subjectResult.subjectId) ||
+          "Matéria",
+        plannedQuestions: 0,
+        hasPlannedQuestions: false,
+        resolved: null,
+        correct: null,
+        wrong: null,
+        accuracy: null,
+        errorRate: null,
+      };
+      const subjectDone = Math.max(0, Number(subjectResult.total || 0));
+      const subjectCorrect = Math.min(
+        subjectDone,
+        Math.max(0, Number(subjectResult.correct || 0)),
+      );
+      row.resolved = (row.resolved || 0) + subjectDone;
+      row.correct = (row.correct || 0) + subjectCorrect;
+      row.wrong = (row.wrong || 0) + Math.max(0, subjectDone - subjectCorrect);
+      subjectRows.set(subjectResult.subjectId, row);
+    });
+    manuallyRecordedMinutes += Math.max(
+      0,
+      Number(test.timeSpentMinutes || 0),
+    );
+  });
+  const rows = [...subjectRows.values()]
+    .map((row) => ({
+      ...row,
+      accuracy:
+        row.resolved > 0 ? (row.correct / row.resolved) * 100 : null,
+      errorRate: row.resolved > 0 ? (row.wrong / row.resolved) * 100 : null,
+    }))
+    .sort((a, b) => a.subject.localeCompare(b.subject, "pt-BR"));
+  const comparableSubjects = rows.filter(
+    (row) => Number(row.resolved || 0) >= 5 && row.accuracy !== null,
+  );
+  const bestAccuracy = comparableSubjects.length
+    ? Math.max(...comparableSubjects.map((row) => row.accuracy))
+    : null;
+  const worstAccuracy = comparableSubjects.length
+    ? Math.min(...comparableSubjects.map((row) => row.accuracy))
+    : null;
+  const bestRows =
+    bestAccuracy === null
+      ? []
+      : comparableSubjects.filter((row) => row.accuracy === bestAccuracy);
+  const worstRows =
+    worstAccuracy === null
+      ? []
+      : comparableSubjects.filter((row) => row.accuracy === worstAccuracy);
+  const reviewsInCycle = reviews.filter((review) => {
+    const date = isoDateFromAny(review.date);
+    if (!date) return false;
+    const dueDate = startOfDay(parseISODate(date));
+    return dueDate >= start && dueDate <= end;
+  });
+  const completedReviews = reviewsInCycle.filter(
+    (review) => review.status === "concluida",
+  ).length;
+  const plannedMinutes = uniqueBlocks.reduce(
+    (sum, entry) => sum + Math.max(0, Number(entry.primary.minutes) || 0),
+    0,
+  );
+  const actualSeconds = uniqueBlocks.reduce(
+    (sum, entry) => sum + Math.max(0, entry.elapsedSeconds),
+    0,
+  );
+  const actualMinutes = Math.round(actualSeconds / 60) + manuallyRecordedMinutes;
+  const plannedQuestionBlocks = subjectBlocks.filter(
+    (item) => Number(item.questionsTarget) > 0,
+  );
+  const plannedQuestions = plannedQuestionBlocks.reduce(
+    (sum, item) => sum + Number(item.questionsTarget || 0),
+    0,
+  );
+  const studyBlocks = subjectBlocks;
+  const completedRoots = new Set(
+    cycleBlocks
+      .filter((item) => item.status === "concluido")
+      .map((item) => item.carryoverSourceId || item.id),
+  );
+  const cycleCompleted =
+    studyBlocks.length > 0 &&
+    [...new Set(studyBlocks.map((item) => item.carryoverSourceId || item.id))]
+      .every((rootId) => completedRoots.has(rootId));
+  const hasRecordedStudyTime =
+    actualSeconds > 0 || manuallyRecordedMinutes > 0;
+
+  return {
+    week: cycleNumber,
+    startDate: dateToLocalISO(start),
+    endDate: dateToLocalISO(end),
+    cycleCompleted,
+    plannedMinutes,
+    actualMinutes: hasRecordedStudyTime ? actualMinutes : null,
+    plannedQuestions:
+      plannedQuestionBlocks.length > 0 ? plannedQuestions : null,
+    resolvedQuestions: hasQuestionResults ? resolvedQuestions : null,
+    correctQuestions: hasQuestionResults ? correctQuestions : null,
+    wrongQuestions: hasQuestionResults ? wrongQuestions : null,
+    accuracy:
+      hasQuestionResults && resolvedQuestions > 0
+        ? (correctQuestions / resolvedQuestions) * 100
+        : null,
+    rows,
+    best: bestRows.length === 1 ? bestRows[0] : null,
+    bestTie: bestRows.length > 1 ? bestRows : [],
+    worst: worstRows.length === 1 ? worstRows[0] : null,
+    worstTie: worstRows.length > 1 ? worstRows : [],
+    comparableSubjectCount: comparableSubjects.length,
+    reviewPlanned: reviewsInCycle.length,
+    reviewCompleted: completedReviews,
+    reviewPending: Math.max(0, reviewsInCycle.length - completedReviews),
+    reviewCompletion:
+      reviewsInCycle.length > 0
+        ? (completedReviews / reviewsInCycle.length) * 100
+        : null,
+    hasReviewData: reviewsInCycle.length > 0,
+    studyBlockCount: studyBlocks.length,
+  };
+}
+
 function subjectCycleCoverage(subject, items = []) {
   const totalTopics = subject?.topics?.length || 0;
   const validTopicIds = new Set(
@@ -1665,6 +1981,8 @@ function createInitialState(
     notes: [],
     questionSessions: [],
     simulatedTests: [],
+    cyclePerformanceSnapshots: [],
+    seenCyclePerformanceKeys: [],
     questionCarryovers: [],
     settings,
     scheduleConfig,
@@ -1777,6 +2095,12 @@ function normalizeLoadedState(value) {
       : [],
     simulatedTests: Array.isArray(loaded.simulatedTests)
       ? loaded.simulatedTests
+      : [],
+    cyclePerformanceSnapshots: Array.isArray(loaded.cyclePerformanceSnapshots)
+      ? loaded.cyclePerformanceSnapshots
+      : [],
+    seenCyclePerformanceKeys: Array.isArray(loaded.seenCyclePerformanceKeys)
+      ? loaded.seenCyclePerformanceKeys
       : [],
     questionCarryovers: normalizeQuestionCarryovers(loaded.questionCarryovers),
     settings: mergedSettings,
@@ -2073,6 +2397,276 @@ function SectionTitle({ icon: Icon, title, subtitle }) {
         <h2 className="text-2xl font-black tracking-tight">{title}</h2>
       </div>
       <p className="mt-1 text-sm text-stone-500">{subtitle}</p>
+    </div>
+  );
+}
+
+function CyclePerformanceDashboard({ report, preview = false }) {
+  if (!report) return null;
+  const numberOrMissing = (value) =>
+    value === null || value === undefined
+      ? "Não registrado"
+      : Number(value).toLocaleString("pt-BR");
+  const percentOrMissing = (value) =>
+    value === null || value === undefined
+      ? "Não registrado"
+      : `${Number(value).toLocaleString("pt-BR", {
+          minimumFractionDigits: 1,
+          maximumFractionDigits: 1,
+        })}%`;
+  const actualMinutes = report.actualMinutes;
+  const maxMinutes = Math.max(report.plannedMinutes, actualMinutes || 0, 1);
+  const maxQuestions = Math.max(
+    1,
+    ...report.rows.map((row) => Number(row.resolved || 0)),
+  );
+  const bestDescription = report.best
+    ? `${report.best.subject} • ${percentOrMissing(report.best.accuracy)} em ${numberOrMissing(report.best.resolved)} questões`
+    : report.bestTie.length
+      ? `Empate: ${report.bestTie.map((row) => row.subject).join(", ")}`
+      : "Dados insuficientes (mínimo de 5 questões por matéria)";
+  const worstDescription = report.worst
+    ? `${report.worst.subject} • ${percentOrMissing(report.worst.accuracy)} em ${numberOrMissing(report.worst.resolved)} questões`
+    : report.worstTie.length
+      ? `Empate: ${report.worstTie.map((row) => row.subject).join(", ")}`
+      : "Dados insuficientes (mínimo de 5 questões por matéria)";
+
+  return (
+    <div className="space-y-5">
+      {preview && (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-900">
+          Prévia de teste: os números abaixo são somente os registros reais
+          disponíveis para este ciclo. O ciclo não é declarado concluído por
+          esta prévia.
+        </div>
+      )}
+      {!report.cycleCompleted && !preview && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950">
+          Ciclo ainda não concluído. Este painel mostra somente os registros
+          existentes até agora.
+        </div>
+      )}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          ["Horas planejadas", formatHours(report.plannedMinutes * 60)],
+          [
+            "Horas estudadas",
+            actualMinutes === null
+              ? "Não registrado"
+              : formatHours(actualMinutes * 60),
+          ],
+          ["Questões planejadas", numberOrMissing(report.plannedQuestions)],
+          ["Questões resolvidas", numberOrMissing(report.resolvedQuestions)],
+          ["Acertos", numberOrMissing(report.correctQuestions)],
+          ["Erros", numberOrMissing(report.wrongQuestions)],
+          ["Taxa de acerto", percentOrMissing(report.accuracy)],
+          [
+            "Ciclo",
+            `Ciclo ${report.week}${report.cycleCompleted ? " • concluído" : " • em andamento"}`,
+          ],
+        ].map(([title, value]) => (
+          <div
+            key={title}
+            className="rounded-2xl border border-stone-200 bg-white p-4"
+          >
+            <p className="text-xs font-bold text-stone-500">{title}</p>
+            <p className="mt-1 text-xl font-black text-stone-950">{value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="p-5">
+          <h3 className="font-black text-stone-950">Desempenho geral</h3>
+          <div className="mt-4 flex items-end justify-between gap-3">
+            <p className="text-3xl font-black text-stone-950">
+              {percentOrMissing(report.accuracy)}
+            </p>
+            <p className="text-right text-xs font-semibold text-stone-500">
+              {report.resolvedQuestions === null
+                ? "Nenhuma sessão de questões registrada"
+                : `${numberOrMissing(report.correctQuestions)} acertos de ${numberOrMissing(report.resolvedQuestions)} questões`}
+            </p>
+          </div>
+          <div className="mt-3">
+            <Progress value={report.accuracy || 0} />
+          </div>
+        </Card>
+        <Card className="p-5">
+          <h3 className="font-black text-stone-950">
+            Horas planejadas versus estudadas
+          </h3>
+          <div className="mt-4 space-y-3">
+            {[
+              {
+                label: "Planejadas",
+                value: report.plannedMinutes,
+                color: "bg-stone-800",
+                missing: false,
+              },
+              {
+                label: "Estudadas",
+                value: actualMinutes || 0,
+                color: "bg-emerald-600",
+                missing: actualMinutes === null,
+              },
+            ].map((item) => (
+              <div key={item.label}>
+                <div className="mb-1 flex justify-between gap-3 text-xs font-bold text-stone-600">
+                  <span>{item.label}</span>
+                  <span>
+                    {item.missing
+                      ? "Não registrado"
+                      : formatHours(item.value * 60)}
+                  </span>
+                </div>
+                <div className="h-3 overflow-hidden rounded-full bg-stone-100">
+                  <div
+                    className={`h-full rounded-full ${item.color}`}
+                    style={{
+                      width: `${item.missing ? 0 : Math.min(100, (item.value / maxMinutes) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+          <p className="text-xs font-black uppercase tracking-wide text-emerald-800">
+            Melhor desempenho
+          </p>
+          <p className="mt-2 text-sm font-bold text-emerald-950">
+            {bestDescription}
+          </p>
+        </div>
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+          <p className="text-xs font-black uppercase tracking-wide text-red-800">
+            Ponto de atenção
+          </p>
+          <p className="mt-2 text-sm font-bold text-red-950">
+            {worstDescription}
+          </p>
+        </div>
+      </div>
+
+      <Card className="p-5">
+        <h3 className="font-black text-stone-950">
+          Revisões do ciclo •{" "}
+          {report.hasReviewData
+            ? `${report.reviewCompleted}/${report.reviewPlanned} concluídas`
+            : "dados não registrados"}
+        </h3>
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[
+            [
+              "Planejadas",
+              report.hasReviewData ? report.reviewPlanned : "N/R",
+              "bg-stone-50 text-stone-950",
+            ],
+            [
+              "Concluídas",
+              report.hasReviewData ? report.reviewCompleted : "N/R",
+              "bg-emerald-50 text-emerald-800",
+            ],
+            [
+              "Pendentes",
+              report.hasReviewData ? report.reviewPending : "N/R",
+              "bg-amber-50 text-amber-900",
+            ],
+            [
+              "Conclusão",
+              percentOrMissing(report.reviewCompletion),
+              "bg-sky-50 text-sky-900",
+            ],
+          ].map(([label, value, tone]) => (
+            <div key={label} className={`rounded-xl p-3 ${tone}`}>
+              <p className="text-xs font-semibold">{label}</p>
+              <p className="mt-1 text-xl font-black">{value}</p>
+            </div>
+          ))}
+        </div>
+        {report.hasReviewData && (
+          <div className="mt-3">
+            <Progress value={report.reviewCompletion} />
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-5">
+        <h3 className="font-black text-stone-950">
+          Comparativo por matéria
+        </h3>
+        <p className="mt-1 text-xs font-medium text-stone-500">
+          Melhor/pior desempenho considera matérias com pelo menos 5 questões
+          respondidas; empates são exibidos sem desempate artificial.
+        </p>
+        {report.rows.length ? (
+          <div className="mt-4 space-y-4">
+            {report.rows.map((row) => (
+              <div
+                key={row.subjectId}
+                className="rounded-2xl border border-stone-100 bg-stone-50 p-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-black text-stone-950">{row.subject}</p>
+                  <p className="text-xs font-bold text-stone-600">
+                    Acerto: {percentOrMissing(row.accuracy)} • Erro:{" "}
+                    {percentOrMissing(row.errorRate)}
+                  </p>
+                </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <p className="text-xs font-semibold text-stone-600">
+                    Planejadas:{" "}
+                    {row.hasPlannedQuestions
+                      ? numberOrMissing(row.plannedQuestions)
+                      : "Não registrado"}
+                  </p>
+                  <p className="text-xs font-semibold text-stone-600">
+                    Resolvidas: {numberOrMissing(row.resolved)}
+                  </p>
+                </div>
+                {row.resolved !== null ? (
+                  <div className="mt-3 space-y-2">
+                    {[
+                      ["Resolvidas", row.resolved, "bg-sky-600"],
+                      ["Acertos", row.correct, "bg-emerald-600"],
+                      ["Erros", row.wrong, "bg-red-500"],
+                    ].map(([label, value, color]) => (
+                      <div
+                        key={label}
+                        className="grid grid-cols-[72px_1fr_36px] items-center gap-2 text-[11px] font-bold text-stone-600"
+                      >
+                        <span>{label}</span>
+                        <div className="h-2 overflow-hidden rounded-full bg-white">
+                          <div
+                            className={`h-full rounded-full ${color}`}
+                            style={{
+                              width: `${Math.min(100, (Number(value || 0) / maxQuestions) * 100)}%`,
+                            }}
+                          />
+                        </div>
+                        <span className="text-right">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-xs font-semibold text-stone-500">
+                    Questões realizadas: não registrado.
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-4 rounded-xl bg-stone-50 p-4 text-sm font-semibold text-stone-600">
+            Não há matérias registradas para este ciclo.
+          </p>
+        )}
+      </Card>
     </div>
   );
 }
@@ -2591,6 +3185,23 @@ export default function App() {
   const [reportWeekFilter, setReportWeekFilter] = useState(
     currentCycleWeek(SYSTEM_TODAY, initial.settings?.studyStartDate),
   );
+  const [cyclePerformanceWeek, setCyclePerformanceWeek] = useState(
+    Math.max(
+      1,
+      Number(
+        initial.currentStudyWeek ||
+          currentCycleWeek(SYSTEM_TODAY, initial.settings?.studyStartDate),
+      ) - 1,
+    ),
+  );
+  const [cyclePerformanceModal, setCyclePerformanceModal] = useState(null);
+  const [cyclePerformanceSnapshots, setCyclePerformanceSnapshots] = useState(
+    initial.cyclePerformanceSnapshots || [],
+  );
+  const [seenCyclePerformanceKeys, setSeenCyclePerformanceKeys] = useState(
+    initial.seenCyclePerformanceKeys || [],
+  );
+  const cyclePerformanceAutoOpenedRef = useRef(false);
   const [reportDayFilter, setReportDayFilter] = useState("all");
   const [roadmapSubject, setRoadmapSubject] = useState("all");
   const [roadmapStatus, setRoadmapStatus] = useState("todos");
@@ -2732,6 +3343,8 @@ export default function App() {
     setNotes(normalized.notes || []);
     setQuestionSessions(normalized.questionSessions || []);
     setSimulatedTests(normalized.simulatedTests || []);
+    setCyclePerformanceSnapshots(normalized.cyclePerformanceSnapshots || []);
+    setSeenCyclePerformanceKeys(normalized.seenCyclePerformanceKeys || []);
     setQuestionCarryovers(
       normalizeQuestionCarryovers(normalized.questionCarryovers),
     );
@@ -2786,6 +3399,23 @@ export default function App() {
     }
   }
 
+  function closeCyclePerformanceModal() {
+    if (
+      cyclePerformanceModal &&
+      !cyclePerformanceModal.preview &&
+      cyclePerformanceReports.some(
+        (report) =>
+          report.week === cyclePerformanceModal.week && report.cycleCompleted,
+      )
+    ) {
+      const key = `${activeExamKeyState}:cycle-performance:${cyclePerformanceModal.week}`;
+      setSeenCyclePerformanceKeys((current) =>
+        current.includes(key) ? current : [...current, key],
+      );
+    }
+    setCyclePerformanceModal(null);
+  }
+
   const appState = useMemo(() => {
     const activeExamDefinition =
       allAvailableExams(customExams, deletedBuiltInExamKeys).find(
@@ -2815,6 +3445,8 @@ export default function App() {
       notes,
       questionSessions,
       simulatedTests,
+      cyclePerformanceSnapshots,
+      seenCyclePerformanceKeys,
       questionCarryovers,
       settings,
       scheduleConfig,
@@ -2831,6 +3463,8 @@ export default function App() {
     notes,
     questionSessions,
     simulatedTests,
+    cyclePerformanceSnapshots,
+    seenCyclePerformanceKeys,
     questionCarryovers,
     settings,
     scheduleConfig,
@@ -2952,6 +3586,106 @@ export default function App() {
     );
     return Array.from({ length: highestWeek }, (_, index) => index + 1);
   }, [weeklySchedule, currentStudyWeek]);
+  const liveCyclePerformanceReports = useMemo(
+    () =>
+      availableScheduleWeeks.map((week) =>
+        buildCyclePerformanceReport({
+          week,
+          weeklySchedule: effectiveWeeklySchedule,
+          schedule,
+          questionSessions,
+          simulatedTests,
+          reviews,
+          roadmap,
+          studyStartDate: settings.studyStartDate,
+        }),
+      ),
+    [
+      availableScheduleWeeks,
+      effectiveWeeklySchedule,
+      schedule,
+      questionSessions,
+      simulatedTests,
+      reviews,
+      roadmap,
+      settings.studyStartDate,
+    ],
+  );
+  const cyclePerformanceReports = useMemo(
+    () =>
+      liveCyclePerformanceReports.map(
+        (report) =>
+          cyclePerformanceSnapshots.find(
+            (snapshot) => Number(snapshot.week) === report.week,
+          ) || report,
+      ),
+    [liveCyclePerformanceReports, cyclePerformanceSnapshots],
+  );
+  const cyclePerformanceReport =
+    cyclePerformanceReports.find(
+      (report) => report.week === Number(cyclePerformanceWeek),
+    ) || null;
+
+  useEffect(() => {
+    const existingWeeks = new Set(
+      cyclePerformanceSnapshots.map((snapshot) => Number(snapshot.week)),
+    );
+    const newlyCompleted = liveCyclePerformanceReports
+      .filter(
+        (report) => report.cycleCompleted && !existingWeeks.has(report.week),
+      )
+      .map((report) => ({
+        ...report,
+        completedAt: new Date().toISOString(),
+      }));
+    if (!newlyCompleted.length) return;
+    setCyclePerformanceSnapshots((current) => {
+      const currentWeeks = new Set(
+        current.map((snapshot) => Number(snapshot.week)),
+      );
+      return [
+        ...current,
+        ...newlyCompleted.filter(
+          (snapshot) => !currentWeeks.has(snapshot.week),
+        ),
+      ];
+    });
+  }, [liveCyclePerformanceReports, cyclePerformanceSnapshots]);
+
+  useEffect(() => {
+    if (cloudLoading || cyclePerformanceAutoOpenedRef.current) return;
+    if (
+      TODAY_DAY_KEY !== "segunda" ||
+      currentStudyDayKey !== "segunda"
+    ) {
+      return;
+    }
+    const previousCycle = cyclePerformanceReports.find(
+      (report) =>
+        report.week === Number(currentStudyWeek) - 1 && report.cycleCompleted,
+    );
+    if (!previousCycle) return;
+    const actualPopupKey = `${activeExamKeyState}:cycle-performance:${previousCycle.week}`;
+    if (seenCyclePerformanceKeys.includes(actualPopupKey)) return;
+    cyclePerformanceAutoOpenedRef.current = true;
+    setCyclePerformanceModal({
+      week: previousCycle.week,
+      preview: false,
+    });
+    setCyclePerformanceWeek(previousCycle.week);
+    setSeenCyclePerformanceKeys((current) =>
+      current.includes(actualPopupKey)
+        ? current
+        : [...current, actualPopupKey],
+    );
+  }, [
+    cloudLoading,
+    cyclePerformanceReports,
+    currentStudyDayKey,
+    currentStudyWeek,
+    activeExamKeyState,
+    seenCyclePerformanceKeys,
+  ]);
 
   const roadmapStats = useMemo(() => {
     const topics = roadmap.flatMap((subject) =>
@@ -8029,6 +8763,100 @@ export default function App() {
                   {confirmDialog.confirmLabel || "Sim"}
                 </button>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {cyclePerformanceModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/60 p-3 backdrop-blur-sm sm:p-5"
+          >
+            <motion.div
+              initial={{ scale: 0.97, y: 12 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.97, y: 12 }}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="cycle-performance-title"
+              className="flex max-h-[94dvh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-stone-200 bg-stone-50 shadow-2xl"
+            >
+              <header className="flex shrink-0 items-start justify-between gap-4 border-b border-stone-200 bg-white p-4 sm:p-6">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-900">
+                    {cyclePerformanceModal.preview
+                      ? "Prévia do dashboard"
+                      : "Resumo de desempenho"}
+                  </p>
+                  <h2
+                    id="cycle-performance-title"
+                    className="mt-1 text-2xl font-black text-stone-950"
+                  >
+                    Ciclo {cyclePerformanceModal.week}
+                  </h2>
+                  {cyclePerformanceReport && (
+                    <p className="mt-1 text-sm font-semibold text-stone-500">
+                      {isoToBR(cyclePerformanceReport.startDate)} –{" "}
+                      {isoToBR(cyclePerformanceReport.endDate)}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <select
+                    aria-label="Escolher ciclo do dashboard"
+                    value={cyclePerformanceModal.week}
+                    onChange={(event) => {
+                      const week = Number(event.target.value);
+                      const report = cyclePerformanceReports.find(
+                        (entry) => entry.week === week,
+                      );
+                      setCyclePerformanceWeek(week);
+                      setCyclePerformanceModal({
+                        week,
+                        preview: !report?.cycleCompleted,
+                      });
+                    }}
+                    className="max-w-32 rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-semibold"
+                  >
+                    {cyclePerformanceReports
+                      .filter(
+                        (report) =>
+                          report.cycleCompleted ||
+                          report.week === cyclePerformanceModal.week,
+                      )
+                      .map((report) => (
+                        <option key={report.week} value={report.week}>
+                          Ciclo {report.week}
+                        </option>
+                      ))}
+                  </select>
+                  <button
+                    type="button"
+                    aria-label="Fechar dashboard de desempenho"
+                    onClick={closeCyclePerformanceModal}
+                    className="rounded-xl border border-stone-200 bg-white p-2 text-stone-600 hover:bg-stone-100"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </header>
+              <div className="overflow-y-auto p-4 sm:p-6">
+                <CyclePerformanceDashboard
+                  report={cyclePerformanceReport}
+                  preview={cyclePerformanceModal.preview}
+                />
+              </div>
+              <footer className="shrink-0 border-t border-stone-200 bg-white p-4 text-right">
+                <button
+                  onClick={closeCyclePerformanceModal}
+                  className="rounded-2xl bg-stone-950 px-5 py-3 text-sm font-black text-white hover:bg-stone-800"
+                >
+                  Fechar dashboard
+                </button>
+              </footer>
             </motion.div>
           </motion.div>
         )}
