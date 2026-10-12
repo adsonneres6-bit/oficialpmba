@@ -569,6 +569,14 @@ function normalizeScheduleItems(items, config) {
     .filter(Boolean);
 }
 
+function isBeforeStudyStartDate(studyStartDate, date = TODAY) {
+  return (
+    isValidISODate(studyStartDate) &&
+    isValidISODate(date) &&
+    studyStartDate > date
+  );
+}
+
 function withDistributedQuestionTargets(items, config, roadmap, options = {}) {
   const baseDaily = dailyQuestionTarget(config);
   const studyStartDate = options.studyStartDate || DEFAULT_STUDY_START_DATE;
@@ -730,6 +738,11 @@ function clampPercent(value) {
 
 function dayLabel(dayKey) {
   return WEEK_DAYS.find(([key]) => key === dayKey)?.[1] || dayKey;
+}
+
+function studyDayKeyForISODate(value) {
+  const date = parseISODate(value || TODAY);
+  return WEEK_DAYS[(date.getDay() + 6) % 7][0];
 }
 
 function dayOfYear(date) {
@@ -1025,6 +1038,7 @@ function todayScheduleFromWeekly(
   roadmap,
   studyStartDate = DEFAULT_STUDY_START_DATE,
 ) {
+  if (isBeforeStudyStartDate(studyStartDate)) return [];
   const week = currentCycleWeek(SYSTEM_TODAY, studyStartDate);
   return hydrateSchedule(
     (weeklySchedule || []).filter(
@@ -1935,12 +1949,18 @@ function defaultSettings() {
 
 function createInitialState(
   examOverride = null,
-  firstWeekStartDayKey = STUDY_DAYS[0],
+  firstWeekStartDayKey = null,
 ) {
   const roadmap = clone(examOverride?.roadmap || roadmapSeed);
+  const studyStartDate = examOverride?.studyStartDate || TODAY;
+  const scheduleStartDayKey =
+    firstWeekStartDayKey ||
+    (examOverride?.studyStartDate
+      ? studyDayKeyForISODate(studyStartDate)
+      : STUDY_DAYS[0]);
   const scheduleConfig = defaultScheduleConfig();
   const settings = syncWeeklyQuestionsWithDaily(
-    defaultSettings(),
+    { ...defaultSettings(), studyStartDate },
     scheduleConfig,
   );
   const hasRoadmap = Array.isArray(roadmap) && roadmap.length > 0;
@@ -1950,11 +1970,11 @@ function createInitialState(
         scheduleConfig,
         settings,
         [],
-        firstWeekStartDayKey,
+        scheduleStartDayKey,
       )
     : [];
   const schedule = hasRoadmap
-    ? scheduleFromWeekly(weeklySchedule, roadmap, 1, TODAY_DAY_KEY)
+    ? todayScheduleFromWeekly(weeklySchedule, roadmap, studyStartDate)
     : [];
 
   const activeExamKey = examOverride?.key || ACTIVE_EXAM_KEY;
@@ -2056,27 +2076,33 @@ function normalizeLoadedState(value) {
     currentStudyDayKey: isSameStudyDate
       ? loaded.currentStudyDayKey || TODAY_DAY_KEY
       : TODAY_DAY_KEY,
-    currentStudyWeek: isSameStudyDate
-      ? Number(loaded.currentStudyWeek || calculatedCurrentWeek)
-      : calculatedCurrentWeek,
+    currentStudyWeek: isBeforeStudyStartDate(mergedSettings.studyStartDate)
+      ? 1
+      : isSameStudyDate
+        ? Number(loaded.currentStudyWeek || calculatedCurrentWeek)
+        : calculatedCurrentWeek,
     roadmap: roadmapData,
-    schedule: hydrateSchedule(
-      withDistributedQuestionTargets(
-        normalizeScheduleItems(
-          isCurrentRoadmap && isSameStudyDate && Array.isArray(loaded.schedule)
-            ? loaded.schedule
-            : todayScheduleFromWeekly(
-                initial.weeklySchedule,
-                roadmapData,
-                mergedSettings.studyStartDate,
-              ),
-          scheduleConfig,
+    schedule: isBeforeStudyStartDate(mergedSettings.studyStartDate)
+      ? []
+      : hydrateSchedule(
+          withDistributedQuestionTargets(
+            normalizeScheduleItems(
+              isCurrentRoadmap &&
+                isSameStudyDate &&
+                Array.isArray(loaded.schedule)
+                ? loaded.schedule
+                : todayScheduleFromWeekly(
+                    initial.weeklySchedule,
+                    roadmapData,
+                    mergedSettings.studyStartDate,
+                  ),
+              scheduleConfig,
+            ),
+            scheduleConfig,
+            roadmapData,
+          ),
+          roadmapData,
         ),
-        scheduleConfig,
-        roadmapData,
-      ),
-      roadmapData,
-    ),
     weeklySchedule: withDistributedQuestionTargets(
       normalizeScheduleItems(
         isCurrentRoadmap && Array.isArray(loaded.weeklySchedule)
@@ -3145,6 +3171,9 @@ export default function App() {
     ...defaultSettings(),
     ...(initial.settings || {}),
   });
+  const isStudyStartDatePending = isBeforeStudyStartDate(
+    settings.studyStartDate,
+  );
   const dashboardStudentName = settings.studentName?.trim();
   const dashboardTitle = dashboardStudentName
     ? `Vá e Vença ${dashboardStudentName}`
@@ -3270,6 +3299,7 @@ export default function App() {
     label: "",
     noExamDate: false,
     examDate: "",
+    studyStartDate: TODAY,
     subjects: [{ subject: "", weight: "3", topics: [""] }],
   });
   const [pdfImportText, setPdfImportText] = useState("");
@@ -5059,7 +5089,7 @@ export default function App() {
       targetConfig,
       settings,
       questionSessions,
-      TODAY_DAY_KEY,
+      studyDayKeyForISODate(settings.studyStartDate),
     );
     setWeeklySchedule((current) => {
       const progressItems = current.filter(
@@ -5632,6 +5662,7 @@ export default function App() {
   }
 
   function pendingStudyItemsForCycle(week) {
+    if (isStudyStartDatePending) return [];
     const items = mergeUniqueScheduleItems(effectiveWeeklySchedule, schedule);
     const completedRoots = new Set(
       items
@@ -5676,6 +5707,95 @@ export default function App() {
     return [...pendingByRoot.values()];
   }
 
+  function blockUntilStudyStartDate() {
+    if (!isStudyStartDatePending) return false;
+    openConfirmDialog({
+      title: "Os estudos ainda não começaram",
+      message: `O cronograma deste edital começa em ${isoToBR(settings.studyStartDate)}. Até essa data, não há atividades ou pendências para avançar.`,
+      confirmLabel: "Entendi",
+      cancelLabel: "Fechar",
+      tone: "amber",
+      onConfirm: () => {},
+    });
+    return true;
+  }
+
+  function startStudiesToday() {
+    openConfirmDialog({
+      title: "Iniciar os estudos hoje?",
+      message:
+        "A data de início deste edital será alterada para hoje e o cronograma será gerado a partir do dia atual. O histórico de estudos será preservado.",
+      confirmLabel: "Sim",
+      cancelLabel: "Não",
+      tone: "amber",
+      onConfirm: startStudiesTodayNow,
+    });
+  }
+
+  function startStudiesTodayNow() {
+    const nextSettings = { ...settings, studyStartDate: TODAY };
+    const generated = buildTwelveWeekSchedule(
+      roadmap,
+      scheduleConfig,
+      nextSettings,
+      questionSessions,
+      TODAY_DAY_KEY,
+    );
+    const normalizedGenerated = withDistributedQuestionTargets(
+      withRecalculatedStudyMinutes(generated, scheduleConfig, roadmap),
+      scheduleConfig,
+      roadmap,
+      { studyStartDate: TODAY },
+    );
+    const completedItems = weeklySchedule.filter(
+      (item) => item.status === "concluido" && !item.carryover,
+    );
+    const nextWeeklySchedule = normalizedGenerated.map((item) => {
+      const previous = completedItems.find(
+        (saved) =>
+          saved.id === item.id ||
+          (Number(saved.week) === Number(item.week) &&
+            saved.dayKey === item.dayKey &&
+            saved.subjectId === item.subjectId &&
+            saved.topicId === item.topicId),
+      );
+      return previous
+        ? {
+            ...item,
+            status: previous.status,
+            completedAt: previous.completedAt,
+            elapsedSeconds: previous.elapsedSeconds || item.elapsedSeconds,
+          }
+        : item;
+    });
+
+    setSettings(nextSettings);
+    setCustomExams((current) =>
+      current.map((exam) =>
+        exam.key === activeExamKeyState
+          ? { ...exam, studyStartDate: TODAY }
+          : exam,
+      ),
+    );
+    setWeeklySchedule(nextWeeklySchedule);
+    setSchedule(
+      scheduleFromWeekly(
+        nextWeeklySchedule,
+        roadmap,
+        1,
+        TODAY_DAY_KEY,
+      ),
+    );
+    setCurrentStudyDayKey(TODAY_DAY_KEY);
+    setCurrentStudyWeek(1);
+    setWeeklyDayFilter(TODAY_DAY_KEY);
+    setWeeklyWeekFilter(1);
+    setScheduleWeekFilter(1);
+    setManualScheduleWeek(1);
+    setReportWeekFilter(1);
+    setScheduleDayFilter("all");
+  }
+
   function isCycleBlockedForEditing(targetWeek) {
     const activeWeek = Number(currentStudyWeek) || 1;
     const requestedWeek = Number(targetWeek) || activeWeek;
@@ -5687,6 +5807,7 @@ export default function App() {
   }
 
   function moveStudyToNextDay() {
+    if (blockUntilStudyStartDate()) return;
     const sourceDayKey =
       schedule.find((item) => item.dayKey)?.dayKey ||
       currentStudyDayKey ||
@@ -5989,6 +6110,20 @@ export default function App() {
     targetDayKey,
     targetWeek,
   ) {
+    if (blockUntilStudyStartDate()) return;
+    const activeWeek = Number(currentStudyWeek) || 1;
+    if (sourceWeek !== activeWeek || targetWeek > activeWeek + 1) {
+      openConfirmDialog({
+        title: "Avanço de ciclo bloqueado",
+        message:
+          "O ciclo selecionado para visualização não altera o ciclo atual. Avance somente a partir do ciclo ativo e na ordem do cronograma.",
+        confirmLabel: "Entendi",
+        cancelLabel: "Fechar",
+        tone: "amber",
+        onConfirm: () => {},
+      });
+      return;
+    }
     const finalDayPendencies =
       sourceDayKey === "domingo" && targetWeek > sourceWeek
         ? pendingStudyItemsForCycle(sourceWeek)
@@ -6149,6 +6284,7 @@ export default function App() {
   }
 
   function rescuePreviousDayPendencies() {
+    if (blockUntilStudyStartDate()) return;
     const targetDayKey = currentStudyDayKey || TODAY_DAY_KEY;
     const targetWeek = Number(currentStudyWeek || effectiveCycleWeek || 1);
     const sourceDayKey = previousStudyDayKey(targetDayKey);
@@ -6243,6 +6379,7 @@ export default function App() {
     targetWeek,
     missingQuestionsToCarry,
   ) {
+    if (blockUntilStudyStartDate()) return;
     const sourceDate = isoDateForCycleWeekDay(
       sourceWeek,
       sourceDayKey,
@@ -6296,6 +6433,7 @@ export default function App() {
   }
 
   function startBlock(id) {
+    if (blockUntilStudyStartDate()) return;
     activeTimerRef.current = id;
     setActiveBlockId(id);
     const now = Date.now();
@@ -6345,6 +6483,7 @@ export default function App() {
   }
 
   function openCompletionModal(id) {
+    if (blockUntilStudyStartDate()) return;
     const block = schedule.find((item) => item.id === id);
     if (!block || block.status === "concluido") return;
     setCompletionBlock(block);
@@ -7542,6 +7681,7 @@ export default function App() {
         key,
         roadmapVersion: exam.roadmapVersion || `CUSTOM_${key.toUpperCase()}`,
         roadmap: exam.roadmap || roadmapSeed,
+        studyStartDate: exam.studyStartDate,
         customExams,
         deletedBuiltInExamKeys,
       });
@@ -7580,6 +7720,7 @@ export default function App() {
       label: "",
       noExamDate: false,
       examDate: "",
+      studyStartDate: TODAY,
       subjects: [{ subject: "", weight: "3", topics: [""] }],
     });
   }
@@ -7593,6 +7734,11 @@ export default function App() {
       label: exam?.label || "",
       noExamDate: Boolean(exam?.noExamDate || !exam?.examDate),
       examDate: exam?.examDate || "",
+      studyStartDate:
+        exam?.studyStartDate ||
+        (exam?.key === activeExamKeyState
+          ? settings.studyStartDate
+          : TODAY),
       subjects: sourceRoadmap.map((subject) => ({
         subject: subject.subject || "",
         weight: String(subject.weight || 3),
@@ -7749,12 +7895,24 @@ export default function App() {
       return setExamCreatorMessage(
         "Informe a data da prova ou marque que ainda não há data definida.",
       );
+    if (
+      !editingExamKey &&
+      (!isValidISODate(examForm.studyStartDate) ||
+        examForm.studyStartDate < TODAY)
+    )
+      return setExamCreatorMessage(
+        "A data de início dos estudos deve ser hoje ou uma data futura.",
+      );
     const roadmap = buildRoadmapFromExamForm(examForm);
     if (!roadmap.length)
       return setExamCreatorMessage(
         "Cadastre pelo menos uma matéria com assunto.",
       );
     const editing = customExams.find((item) => item.key === editingExamKey);
+    const studyStartDate = editing
+      ? editing.studyStartDate ||
+        (editing.key === activeExamKeyState ? settings.studyStartDate : TODAY)
+      : examForm.studyStartDate;
     const key = editing ? editing.key : slugifyExamKey(label);
     const versionSuffix = editing ? Number(editing.revision || 1) + 1 : 1;
     const exam = {
@@ -7766,6 +7924,7 @@ export default function App() {
       roadmapVersion: `CUSTOM_${key.toUpperCase()}_V${versionSuffix}`,
       examDate: examForm.noExamDate ? "" : examForm.examDate,
       noExamDate: examForm.noExamDate,
+      studyStartDate,
       roadmap,
     };
     const nextCustomExams = [
@@ -7784,8 +7943,32 @@ export default function App() {
         customExams: nextCustomExams,
         deletedBuiltInExamKeys,
       },
-      editing ? STUDY_DAYS[0] : TODAY_DAY_KEY,
+      editing
+        ? STUDY_DAYS[0]
+        : studyDayKeyForISODate(studyStartDate),
     );
+    if (!editing) {
+      nextState.weeklySchedule = withDistributedQuestionTargets(
+        withRecalculatedStudyMinutes(
+          nextState.weeklySchedule,
+          nextState.scheduleConfig,
+          nextState.roadmap,
+        ),
+        nextState.scheduleConfig,
+        nextState.roadmap,
+        { studyStartDate: nextState.settings.studyStartDate },
+      );
+      nextState.schedule = withDistributedQuestionTargets(
+        withRecalculatedStudyMinutes(
+          nextState.schedule,
+          nextState.scheduleConfig,
+          nextState.roadmap,
+        ),
+        nextState.scheduleConfig,
+        nextState.roadmap,
+        { studyStartDate: nextState.settings.studyStartDate },
+      );
+    }
     nextState.settings = {
       ...nextState.settings,
       examDate: exam.examDate || "",
@@ -8968,11 +9151,15 @@ export default function App() {
           <div className="mt-5">
             <div className="flex justify-between text-xs text-stone-200">
               <span>Progresso geral</span>
-              <span>{stats.progress}%</span>
+              <span>
+                {isStudyStartDatePending ? "—" : `${stats.progress}%`}
+              </span>
             </div>
             <div className="mt-2 h-2 rounded-full bg-white/10">
               <div
-                style={{ width: `${stats.progress}%` }}
+                style={{
+                  width: `${isStudyStartDatePending ? 0 : stats.progress}%`,
+                }}
                 className="h-full rounded-full bg-amber-200"
               />
             </div>
@@ -9014,15 +9201,21 @@ export default function App() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Badge tone={stats.pendingErrors > 0 ? "red" : "green"}>
-                {stats.pendingErrors} erros pendentes
-              </Badge>
-              <Badge tone="amber">
-                Sequência: {stats.studyStreak} dia
-                {stats.studyStreak === 1 ? "" : "s"}
-              </Badge>
+              {isStudyStartDatePending ? (
+                <Badge tone="amber">Estudos ainda não começaram</Badge>
+              ) : (
+                <>
+                  <Badge tone={stats.pendingErrors > 0 ? "red" : "green"}>
+                    {stats.pendingErrors} erros pendentes
+                  </Badge>
+                  <Badge tone="amber">
+                    Sequência: {stats.studyStreak} dia
+                    {stats.studyStreak === 1 ? "" : "s"}
+                  </Badge>
+                </>
+              )}
               <Badge tone="stone">Meta: {settings.dailyHours || 0}h/dia</Badge>
-              {overdueStudyItems.length > 0 && (
+              {!isStudyStartDatePending && overdueStudyItems.length > 0 && (
                 <Badge tone="red">
                   {overdueStudyItems.length} matéria(s) pendente(s) do dia
                   anterior
@@ -9119,18 +9312,45 @@ export default function App() {
               )}
               {roadmap.length > 0 && (
                 <div className="space-y-6">
+                  {isStudyStartDatePending && (
+                    <Card className="border-amber-200 bg-amber-50 p-6">
+                      <p className="text-center text-base font-black text-amber-950">
+                        Os estudos ainda não começaram. O ciclo começará na
+                        data definida para este edital. Data de início:{" "}
+                        {isoToBR(settings.studyStartDate)}.
+                      </p>
+                      <div className="mt-4 flex justify-center">
+                        <button
+                          onClick={startStudiesToday}
+                          className="rounded-2xl bg-amber-700 px-5 py-3 text-sm font-black text-white transition hover:bg-amber-800"
+                        >
+                          Deseja iniciar hoje?
+                        </button>
+                      </div>
+                    </Card>
+                  )}
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                     <Stat
                       icon={Target}
                       title="Progresso"
-                      value={`${stats.progress}%`}
-                      hint={`${roadmapStats.done} concluído(s) de ${roadmapStats.total} assunto(s)`}
+                      value={
+                        isStudyStartDatePending ? "—" : `${stats.progress}%`
+                      }
+                      hint={
+                        isStudyStartDatePending
+                          ? "aguardando início dos estudos"
+                          : `${roadmapStats.done} concluído(s) de ${roadmapStats.total} assunto(s)`
+                      }
                     />
                     <Stat
                       icon={CheckSquare}
                       title="Questões"
-                      value={stats.questionsDone}
-                      hint="total geral de questões"
+                      value={isStudyStartDatePending ? "—" : stats.questionsDone}
+                      hint={
+                        isStudyStartDatePending
+                          ? "aguardando início dos estudos"
+                          : "total geral de questões"
+                      }
                     />
                     <Card className="p-4">
                       <div className="flex items-start justify-between gap-2">
@@ -9141,7 +9361,9 @@ export default function App() {
                           <div className="mt-2 grid grid-cols-2 gap-1.5">
                             <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-2 py-2 text-center">
                               <p className="text-xl font-black leading-none text-emerald-700">
-                                {stats.questionsCorrect}
+                                {isStudyStartDatePending
+                                  ? "—"
+                                  : stats.questionsCorrect}
                               </p>
                               <p className="mt-1 text-[9px] font-bold uppercase leading-none tracking-normal text-emerald-700">
                                 acertos
@@ -9149,7 +9371,9 @@ export default function App() {
                             </div>
                             <div className="rounded-xl border border-red-100 bg-red-50 px-2 py-2 text-center">
                               <p className="text-xl font-black leading-none text-red-700">
-                                {stats.questionsWrong}
+                                {isStudyStartDatePending
+                                  ? "—"
+                                  : stats.questionsWrong}
                               </p>
                               <p className="mt-1 text-[9px] font-bold uppercase leading-none tracking-normal text-red-700">
                                 erros
@@ -9157,7 +9381,10 @@ export default function App() {
                             </div>
                           </div>
                           <p className="mt-2 whitespace-nowrap text-[11px] font-semibold text-stone-500">
-                            Aproveitamento: {stats.accuracy}%
+                            Aproveitamento:{" "}
+                            {isStudyStartDatePending
+                              ? "—"
+                              : `${stats.accuracy}%`}
                           </p>
                         </div>
                         <div className="rounded-xl bg-stone-950 p-2 text-white">
@@ -9168,8 +9395,16 @@ export default function App() {
                     <Stat
                       icon={Clock}
                       title="Horas"
-                      value={formatHours(stats.studiedSeconds)}
-                      hint="tempo geral estudado até agora"
+                      value={
+                        isStudyStartDatePending
+                          ? "—"
+                          : formatHours(stats.studiedSeconds)
+                      }
+                      hint={
+                        isStudyStartDatePending
+                          ? "aguardando início dos estudos"
+                          : "tempo geral estudado até agora"
+                      }
                     />
                     <Stat
                       icon={Flame}
@@ -9186,12 +9421,26 @@ export default function App() {
                           title="O que estudar agora"
                           subtitle="Ordem adaptativa com base em peso, desempenho e pendências."
                         />
-                        <Badge tone="amber">Aguardando desempenho</Badge>
+                        <Badge tone="amber">
+                          {isStudyStartDatePending
+                            ? "Aguardando início"
+                            : "Aguardando desempenho"}
+                        </Badge>
                       </div>
                       <div className="mt-5 space-y-3">
-                        {dashboardStudyItems.length === 0 ? (
-                          <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
-                            Todos os blocos de estudo de hoje foram concluídos.
+                        {isStudyStartDatePending ||
+                        dashboardStudyItems.length === 0 ? (
+                          <div
+                            className={cls(
+                              "rounded-3xl border p-4 text-sm font-semibold",
+                              isStudyStartDatePending
+                                ? "border-amber-200 bg-amber-50 text-amber-900"
+                                : "border-emerald-200 bg-emerald-50 text-emerald-800",
+                            )}
+                          >
+                            {isStudyStartDatePending
+                              ? `Os estudos deste edital começam em ${isoToBR(settings.studyStartDate)}.`
+                              : "Todos os blocos de estudo de hoje foram concluídos."}
                           </div>
                         ) : (
                           dashboardStudyItems.map((item) => (
@@ -9248,9 +9497,20 @@ export default function App() {
                       <SectionTitle
                         icon={AlertTriangle}
                         title="Alertas inteligentes"
-                        subtitle="Pendências que podem atrapalhar sua evolução."
+                        subtitle={
+                          isStudyStartDatePending
+                            ? "Os alertas de estudo serão exibidos quando o edital começar."
+                            : "Pendências que podem atrapalhar sua evolução."
+                        }
                       />
-                      <div className="mt-5 space-y-3">
+                      {isStudyStartDatePending ? (
+                        <div className="mt-5 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+                          Os estudos ainda não começaram. Nenhuma atividade ou
+                          pendência será contabilizada antes de{" "}
+                          {isoToBR(settings.studyStartDate)}.
+                        </div>
+                      ) : (
+                        <div className="mt-5 space-y-3">
                         {overdueStudyItems.length > 0 && (
                           <div className="rounded-3xl border-2 border-red-200 bg-red-50 p-4 text-sm text-red-800">
                             <b>Pendentes do dia anterior:</b>{" "}
@@ -9395,7 +9655,8 @@ export default function App() {
                             </div>
                           </div>
                         </div>
-                      </div>
+                        </div>
+                      )}
                     </Card>
                   </div>
                 </div>
@@ -9410,10 +9671,32 @@ export default function App() {
             >
               <SectionTitle
                 icon={CalendarDays}
-                title={`Estudo do Dia • ${dayLabel(currentStudyDayKey)} • Ciclo ${currentStudyWeek}`}
-                subtitle="Iniciar roda o cronômetro do bloco; concluir abre o registro final do assunto."
+                title={
+                  isStudyStartDatePending
+                    ? "Estudos ainda não começaram"
+                    : `Estudo do Dia • ${dayLabel(currentStudyDayKey)} • Ciclo ${currentStudyWeek}`
+                }
+                subtitle={
+                  isStudyStartDatePending
+                    ? `O edital inicia em ${isoToBR(settings.studyStartDate)}. Até lá, o cronograma não gera atividades nem pendências.`
+                    : "Iniciar roda o cronômetro do bloco; concluir abre o registro final do assunto."
+                }
               />
-              <Card className="p-4">
+              {isStudyStartDatePending && (
+                <Card className="border-amber-200 bg-amber-50 p-6 text-center">
+                  <CalendarDays
+                    size={28}
+                    className="mx-auto text-amber-700"
+                  />
+                  <p className="mt-3 font-black text-amber-950">
+                    O Ciclo 1 começará na data definida para este edital.
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-amber-800">
+                    Data de início: {isoToBR(settings.studyStartDate)}
+                  </p>
+                </Card>
+              )}
+              {!isStudyStartDatePending && <Card className="p-4">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
                     <p className="text-sm font-black text-stone-950">
@@ -9439,8 +9722,8 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-              </Card>
-              <div className="grid gap-4">
+              </Card>}
+              {!isStudyStartDatePending && <div className="grid gap-4">
                 {schedule.map((item) => (
                   <StudyCard
                     key={item.id}
@@ -9571,7 +9854,7 @@ export default function App() {
                     </div>
                   </StudyCard>
                 ))}
-              </div>
+              </div>}
             </motion.section>
           )}
           {view === "weekly" && (
@@ -9599,7 +9882,10 @@ export default function App() {
                             : "border-stone-200 bg-white text-stone-600 hover:bg-stone-50",
                         )}
                       >
-                        {key === TODAY_DAY_KEY ? `${label} - Hoje` : label}
+                        {Number(weeklyWeekFilter) === effectiveCycleWeek &&
+                        key === TODAY_DAY_KEY
+                          ? `${label} - Hoje`
+                          : label}
                       </button>
                     ))}
                   </div>
@@ -9877,8 +10163,23 @@ export default function App() {
                         Number(item.week) === Number(tableWeek) &&
                         item.dayKey === dayKey,
                     );
-                    return { dayKey, label, items };
+                    const plannedItems = items.filter(
+                      (item) => item.status !== "livre",
+                    );
+                    return {
+                      dayKey,
+                      label,
+                      items,
+                      hasPlannedItems: plannedItems.length > 0,
+                      completed:
+                        plannedItems.length > 0 &&
+                        plannedItems.every(
+                          (item) => item.status === "concluido",
+                        ),
+                    };
                   });
+                  const isCurrentPlanningCycle =
+                    Number(tableWeek) === effectiveCycleWeek;
                   const maxRows = Math.max(
                     1,
                     ...dayEntries.map((entry) => entry.items.length),
@@ -9894,11 +10195,27 @@ export default function App() {
                                 className="border-r border-white/10 px-4 py-3 text-sm font-black"
                               >
                                 {entry.label}
-                                {entry.dayKey === TODAY_DAY_KEY && (
-                                  <span className="ml-2 rounded-full bg-white/15 px-2 py-1 text-[10px] uppercase tracking-wide">
-                                    Hoje
-                                  </span>
-                                )}
+                                {isCurrentPlanningCycle &&
+                                  entry.hasPlannedItems && (
+                                    <span
+                                      className={cls(
+                                        "ml-2 rounded-full px-2 py-1 text-[10px] uppercase tracking-wide",
+                                        entry.completed
+                                          ? "bg-emerald-500/20 text-emerald-200"
+                                          : "bg-red-500/20 text-red-200",
+                                      )}
+                                    >
+                                      {entry.completed
+                                        ? "Concluído"
+                                        : "Pendente"}
+                                    </span>
+                                  )}
+                                {isCurrentPlanningCycle &&
+                                  entry.dayKey === TODAY_DAY_KEY && (
+                                    <span className="ml-2 rounded-full bg-white/15 px-2 py-1 text-[10px] uppercase tracking-wide">
+                                      Hoje
+                                    </span>
+                                  )}
                               </th>
                             ))}
                           </tr>
@@ -12809,8 +13126,9 @@ export default function App() {
                         : "Novo Edital / Concurso"}
                     </h3>
                     <p className="text-sm text-stone-500">
-                      Cadastre o concurso, data da prova e matérias/assuntos por
-                      modo manual ou Excel/CSV.
+                      Cadastre o concurso, as datas da prova e do início dos
+                      estudos, e as matérias/assuntos por modo manual ou
+                      Excel/CSV.
                     </p>
                   </div>
                   <button
@@ -12862,6 +13180,28 @@ export default function App() {
                           className="w-full rounded-2xl border border-stone-200 px-4 py-3 disabled:bg-stone-100 disabled:text-stone-400"
                         />
                       </label>
+                      {!editingExamKey && (
+                        <label className="space-y-1 text-sm font-semibold text-stone-700">
+                          Data de início dos estudos
+                          <input
+                            value={examForm.studyStartDate}
+                            min={TODAY}
+                            required
+                            onChange={(event) =>
+                              setExamForm((current) => ({
+                                ...current,
+                                studyStartDate: event.target.value,
+                              }))
+                            }
+                            type="date"
+                            className="w-full rounded-2xl border border-stone-200 px-4 py-3"
+                          />
+                          <span className="block text-xs font-medium text-stone-500">
+                            Por padrão, hoje. Você pode escolher uma data
+                            futura; os dias anteriores do ciclo ficam vazios.
+                          </span>
+                        </label>
+                      )}
                     </div>
                     <label className="flex items-center gap-2 rounded-2xl border border-stone-200 bg-white p-3 text-sm font-semibold text-stone-700">
                       <input
