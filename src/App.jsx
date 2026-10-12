@@ -5393,8 +5393,7 @@ export default function App() {
       const currentSlot = daySlots[index] || { subjectId: "", topicId: "" };
       const updated = { ...currentSlot, [field]: value };
       if (field === "subjectId") {
-        const topics = topicOptionsForManualSubject(value);
-        updated.topicId = topics[0]?.id || "";
+        updated.topicId = "";
       }
       daySlots[index] = updated;
       next[dayKey] = daySlots;
@@ -5520,14 +5519,15 @@ export default function App() {
 
         const subject = getSubject(roadmap, slot.subjectId);
         if (!subject) return;
-        const autoTopicId = nextTopicForManualSubject(
-          subject.id,
-          week,
-          usedTopics,
-        );
+        const selectedTopic = getTopic(roadmap, subject.id, slot.topicId);
+        const autoTopicId = selectedTopic
+          ? ""
+          : nextTopicForManualSubject(subject.id, week, usedTopics);
         if (autoTopicId) usedTopics.add(`${subject.id}:${autoTopicId}`);
         const topic =
-          getTopic(roadmap, subject.id, autoTopicId) || subject.topics?.[0];
+          selectedTopic ||
+          getTopic(roadmap, subject.id, autoTopicId) ||
+          subject.topics?.[0];
         items.push({
           id: `manual-w${week}-${dayKey}-${index}-${subject.id}-${topic?.id || "sem_topico"}`,
           week: Number(week),
@@ -10294,7 +10294,7 @@ export default function App() {
                       <SectionTitle
                         icon={Edit3}
                         title="Editar cronograma manual"
-                        subtitle={`Ciclo ${manualScheduleWeek}: escolha as matérias ou blocos de todos os dias. Os assuntos das matérias são gerados automaticamente.`}
+                        subtitle={`Ciclo ${manualScheduleWeek}: escolha a matéria e, se quiser, o assunto de cada bloco. Os assuntos cadastrados da matéria selecionada ficam disponíveis.`}
                       />
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -10324,7 +10324,7 @@ export default function App() {
                   </div>
 
                   <div className="mt-5 overflow-x-auto">
-                    <table className="min-w-[1120px] w-full border-collapse text-left">
+                    <table className="min-w-[1400px] w-full border-collapse text-left">
                       <thead>
                         <tr className="bg-stone-950 text-white">
                           {WEEK_DAYS.map(([dayKey, label]) => (
@@ -10369,6 +10369,16 @@ export default function App() {
                                   subjectId: "",
                                   topicId: "",
                                 };
+                                const isSpecialSlot =
+                                  MANUAL_SPECIAL_BLOCKS.some(
+                                    (special) => special.id === slot.subjectId,
+                                  );
+                                const topicOptions =
+                                  slot.subjectId && !isSpecialSlot
+                                    ? topicOptionsForManualSubject(
+                                        slot.subjectId,
+                                      )
+                                    : [];
                                 return (
                                   <td
                                     key={`${dayKey}-${slotIndex}`}
@@ -10377,7 +10387,14 @@ export default function App() {
                                     <p className="mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-stone-400">
                                       Bloco {slotIndex + 1}
                                     </p>
+                                    <label
+                                      htmlFor={`manual-subject-${dayKey}-${slotIndex}`}
+                                      className="mb-1 block text-[10px] font-black uppercase tracking-wide text-stone-500"
+                                    >
+                                      Matéria
+                                    </label>
                                     <select
+                                      id={`manual-subject-${dayKey}-${slotIndex}`}
                                       value={slot.subjectId}
                                       onChange={(event) =>
                                         updateManualScheduleDraft(
@@ -10408,10 +10425,51 @@ export default function App() {
                                         </option>
                                       ))}
                                     </select>
-                                    <p className="mt-2 text-[11px] font-semibold leading-relaxed text-stone-500">
-                                      {dayKey === "domingo"
-                                        ? "Escolha uma matéria ou outro bloco; deixe sem bloco para remover."
-                                        : "O assunto será escolhido automaticamente ao salvar."}
+                                    <label
+                                      htmlFor={`manual-topic-${dayKey}-${slotIndex}`}
+                                      className="mb-1 mt-3 block text-[10px] font-black uppercase tracking-wide text-stone-500"
+                                    >
+                                      Assunto
+                                    </label>
+                                    <select
+                                      id={`manual-topic-${dayKey}-${slotIndex}`}
+                                      value={isSpecialSlot ? "" : slot.topicId}
+                                      disabled={
+                                        !slot.subjectId ||
+                                        isSpecialSlot ||
+                                        topicOptions.length === 0
+                                      }
+                                      onChange={(event) =>
+                                        updateManualScheduleDraft(
+                                          dayKey,
+                                          slotIndex,
+                                          "topicId",
+                                          event.target.value,
+                                        )
+                                      }
+                                      className="w-full rounded-2xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700 disabled:bg-stone-100 disabled:text-stone-400"
+                                    >
+                                      <option value="">
+                                        {isSpecialSlot
+                                          ? "Não se aplica"
+                                          : slot.subjectId
+                                            ? topicOptions.length
+                                              ? "Seleção automática"
+                                              : "Nenhum assunto cadastrado"
+                                            : "Selecione uma matéria"}
+                                      </option>
+                                      {topicOptions.map((topic) => (
+                                        <option key={topic.id} value={topic.id}>
+                                          {topic.title}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <p className="mt-2 text-[10px] font-semibold leading-relaxed text-stone-500">
+                                      {isSpecialSlot
+                                        ? "Bloco especial, sem assunto do edital."
+                                        : slot.subjectId
+                                          ? "Se não escolher, o assunto será selecionado automaticamente."
+                                          : "Selecione uma matéria para listar os assuntos."}
                                     </p>
                                   </td>
                                 );
