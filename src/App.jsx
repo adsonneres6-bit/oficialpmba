@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { AnimatePresence, motion } from "framer-motion";
 import * as XLSX from "xlsx";
+import { mergeManualScheduleWeek } from "./lib/manualSchedule.js";
 import {
   AlertTriangle,
   BarChart3,
@@ -1045,6 +1046,7 @@ function todayScheduleFromWeekly(
       (item) =>
         Number(item.week) === week &&
         item.dayKey === TODAY_DAY_KEY &&
+        !item.archived &&
         shouldShowInStudyDay(item, TODAY_DAY_KEY),
     ),
     roadmap,
@@ -1057,6 +1059,7 @@ function scheduleFromWeekly(weeklySchedule, roadmap, week, dayKey) {
       (item) =>
         Number(item.week) === Number(week) &&
         item.dayKey === dayKey &&
+        !item.archived &&
         shouldShowInStudyDay(item, dayKey),
     ),
     roadmap,
@@ -1171,6 +1174,7 @@ function mergeUniqueScheduleItems(baseItems, extraItems) {
 function buildCyclePerformanceReport({
   week,
   weeklySchedule = [],
+  historicalSchedule = [],
   schedule = [],
   questionSessions = [],
   simulatedTests = [],
@@ -1180,6 +1184,13 @@ function buildCyclePerformanceReport({
 }) {
   const cycleNumber = Number(week) || 1;
   const allBlocks = mergeUniqueScheduleItems(weeklySchedule, schedule);
+  const knownBlockIds = new Set(allBlocks.map((item) => item.id));
+  historicalSchedule.forEach((item) => {
+    if (!knownBlockIds.has(item.id)) {
+      knownBlockIds.add(item.id);
+      allBlocks.push(item);
+    }
+  });
   const cycleBlocks = allBlocks.filter(
     (item) =>
       Number(item.week) === cycleNumber ||
@@ -1212,6 +1223,7 @@ function buildCyclePerformanceReport({
     .filter(
       (item) =>
         item.subjectId &&
+        !item.archived &&
         ![
           "questoes",
           "simulado",
@@ -1405,7 +1417,11 @@ function buildCyclePerformanceReport({
     (review) => review.status === "concluida",
   ).length;
   const plannedMinutes = uniqueBlocks.reduce(
-    (sum, entry) => sum + Math.max(0, Number(entry.primary.minutes) || 0),
+    (sum, entry) =>
+      sum +
+      (entry.primary.archived
+        ? 0
+        : Math.max(0, Number(entry.primary.minutes) || 0)),
     0,
   );
   const actualSeconds = uniqueBlocks.reduce(
@@ -1423,7 +1439,7 @@ function buildCyclePerformanceReport({
   const studyBlocks = subjectBlocks;
   const completedRoots = new Set(
     cycleBlocks
-      .filter((item) => item.status === "concluido")
+      .filter((item) => !item.archived && item.status === "concluido")
       .map((item) => item.carryoverSourceId || item.id),
   );
   const cycleCompleted =
@@ -3334,6 +3350,7 @@ export default function App() {
   const clearingProfileRef = useRef(false);
   const skipPersistenceSnapshotRef = useRef(null);
   const pendingStateSaveRef = useRef(null);
+  const stateSaveQueueRef = useRef(Promise.resolve());
   const [cloudLoading, setCloudLoading] = useState(Boolean(supabase));
   const [cloudStatus, setCloudStatus] = useState(
     supabase
@@ -3550,7 +3567,12 @@ export default function App() {
         portugues?.topics.find((t) => t.title.includes("Reconhecimento")),
       );
 
-      const savePromise = saveStateToSupabase(appState);
+      const savePromise = stateSaveQueueRef.current
+        .catch((error) => {
+          console.error("Erro no salvamento anterior do Supabase:", error);
+        })
+        .then(() => saveStateToSupabase(appState));
+      stateSaveQueueRef.current = savePromise;
       pendingStateSaveRef.current = savePromise;
       let result;
       try {
@@ -3597,7 +3619,10 @@ export default function App() {
 
   const effectiveWeeklySchedule = useMemo(() => {
     return withDistributedQuestionTargets(
-      normalizeScheduleItems(weeklySchedule, scheduleConfig),
+      normalizeScheduleItems(
+        weeklySchedule.filter((item) => !item.archived),
+        scheduleConfig,
+      ),
       scheduleConfig,
       roadmap,
       { questionCarryovers, studyStartDate: settings.studyStartDate },
@@ -3622,6 +3647,7 @@ export default function App() {
         buildCyclePerformanceReport({
           week,
           weeklySchedule: effectiveWeeklySchedule,
+          historicalSchedule: weeklySchedule.filter((item) => item.archived),
           schedule,
           questionSessions,
           simulatedTests,
@@ -3633,6 +3659,7 @@ export default function App() {
     [
       availableScheduleWeeks,
       effectiveWeeklySchedule,
+      weeklySchedule,
       schedule,
       questionSessions,
       simulatedTests,
@@ -3834,8 +3861,14 @@ export default function App() {
     const pendingErrors = errors.filter(
       (item) => item.status !== "resolvido",
     ).length;
-    const completedToday = schedule.filter(
-      (item) => item.status === "concluido",
+    const completedToday = mergeUniqueScheduleItems(
+      weeklySchedule,
+      schedule,
+    ).filter(
+      (item) =>
+        item.status === "concluido" &&
+        Number(item.week) === Number(currentStudyWeek) &&
+        item.dayKey === currentStudyDayKey,
     ).length;
     const studiedSeconds = uniqueStudyBlocksForTotals(
       weeklySchedule,
@@ -3873,6 +3906,8 @@ export default function App() {
     questionSessions,
     roadmapStats.percent,
     schedule,
+    currentStudyDayKey,
+    currentStudyWeek,
     settings.studyStartDate,
     weeklySchedule,
   ]);
@@ -4906,7 +4941,17 @@ export default function App() {
   }, [examCountdown.daysLeft]);
 
   const completedStudyHistory = useMemo(() => {
-    const source = mergeUniqueScheduleItems(weeklySchedule, schedule);
+    const source = mergeUniqueScheduleItems(
+      weeklySchedule.filter((item) => !item.archived),
+      schedule,
+    );
+    const knownBlockIds = new Set(source.map((item) => item.id));
+    weeklySchedule.forEach((item) => {
+      if (item.archived && !knownBlockIds.has(item.id)) {
+        knownBlockIds.add(item.id);
+        source.push(item);
+      }
+    });
     const completedItems = source.filter(
       (item) =>
         item.status === "concluido" &&
@@ -4923,9 +4968,34 @@ export default function App() {
     return completedItems
       .filter(
         (item) =>
-          !item.carryover ||
-          !item.carryoverSourceId ||
-          !completedSourceIds.has(item.carryoverSourceId),
+          (!item.carryover ||
+            !item.carryoverSourceId ||
+            !completedSourceIds.has(item.carryoverSourceId)) &&
+          (!item.archived ||
+            !(Array.isArray(item.topicIds) && item.topicIds.length
+              ? item.topicIds
+              : item.topicId
+                ? [item.topicId]
+                : []
+            ).every((topicId) =>
+              completedItems.some((activeItem) => {
+                if (
+                  activeItem.archived ||
+                  activeItem.subjectId !== item.subjectId ||
+                  Number(activeItem.week) !== Number(item.week)
+                ) {
+                  return false;
+                }
+                const activeTopicIds =
+                  Array.isArray(activeItem.topicIds) &&
+                  activeItem.topicIds.length
+                    ? activeItem.topicIds
+                    : activeItem.topicId
+                      ? [activeItem.topicId]
+                      : [];
+                return activeTopicIds.includes(topicId);
+              }),
+            )),
       )
       .map((item) => ({
         ...item,
@@ -5541,7 +5611,7 @@ export default function App() {
           type: "Estudo",
           minutes: blockMinutes,
           questionsTarget: 0,
-          status: "pendente",
+          status: topic?.done ? "concluido" : "pendente",
           elapsedSeconds: 0,
           plannedBy: "manual",
           plannedWeight: subject.weight,
@@ -5570,31 +5640,59 @@ export default function App() {
       manualScheduleWeek,
       manualScheduleDraft,
     );
-    setWeeklySchedule((current) => {
-      const next = [
-        ...current.filter(
-          (item) => Number(item.week) !== Number(manualScheduleWeek),
-        ),
-        ...newWeekItems,
-      ].sort(
-        (a, b) =>
-          Number(a.week || 0) - Number(b.week || 0) ||
-          WEEK_DAYS.findIndex(([key]) => key === a.dayKey) -
-            WEEK_DAYS.findIndex(([key]) => key === b.dayKey) ||
-          Number(a.manualSlot || 0) - Number(b.manualSlot || 0),
-      );
-
-      if (Number(manualScheduleWeek) === effectiveCycleWeek) {
-        const todayItems = scheduleFromWeekly(
-          next,
-          roadmap,
-          manualScheduleWeek,
-          TODAY_DAY_KEY,
-        );
-        setSchedule(todayItems);
-      }
-      return next;
+    const historicalIds = [
+      ...questionSessions,
+      ...errors,
+      ...notes,
+    ].flatMap((record) => (record.sourceBlockId ? [record.sourceBlockId] : []));
+    const progressItems = schedule
+      .filter((item) => Number(item.week) === Number(manualScheduleWeek))
+      .map((item) => {
+        const elapsedSeconds = liveElapsedSeconds(item);
+        return {
+          ...item,
+          elapsedSeconds,
+          baseElapsedSeconds: Math.max(
+            Number(item.baseElapsedSeconds || 0),
+            elapsedSeconds,
+          ),
+        };
+      });
+    const nextWeeklySchedule = mergeManualScheduleWeek({
+      weeklySchedule,
+      progressItems,
+      newItems: newWeekItems,
+      week: manualScheduleWeek,
+      historicalIds,
     });
+    setWeeklySchedule(nextWeeklySchedule);
+
+    if (Number(manualScheduleWeek) === Number(currentStudyWeek)) {
+      const todayItems = scheduleFromWeekly(
+        nextWeeklySchedule,
+        roadmap,
+        currentStudyWeek,
+        currentStudyDayKey,
+      );
+      const todayCarryovers = schedule.filter(
+        (item) =>
+          item.carryover &&
+          Number(item.week) === Number(currentStudyWeek) &&
+          item.dayKey === currentStudyDayKey,
+      );
+      const nextTodaySchedule = mergeUniqueScheduleItems(
+        todayItems,
+        todayCarryovers,
+      );
+      setSchedule(nextTodaySchedule);
+      if (
+        activeBlockId &&
+        !nextTodaySchedule.some((item) => item.id === activeBlockId)
+      ) {
+        activeTimerRef.current = null;
+        setActiveBlockId(null);
+      }
+    }
     setScheduleWeekFilter(Number(manualScheduleWeek));
     setManualScheduleOpen(false);
     setManualScheduleMessage(`Ciclo ${manualScheduleWeek} salva manualmente.`);
