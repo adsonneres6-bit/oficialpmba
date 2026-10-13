@@ -2,7 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { AnimatePresence, motion } from "framer-motion";
 import * as XLSX from "xlsx";
-import { mergeManualScheduleWeek } from "./lib/manualSchedule.js";
+import {
+  applyManualScheduleEdit,
+  enqueueSerializedStateSave,
+  mergeStudyProgress,
+  resolveLoadedScheduleSources,
+} from "./lib/manualSchedule.js";
+import {
+  fetchPublishedBuildId,
+  isUpdateAvailable,
+} from "./lib/appUpdates.js";
 import {
   AlertTriangle,
   BarChart3,
@@ -2077,6 +2086,24 @@ function normalizeLoadedState(value) {
   const loadedStudyIsoDate =
     loaded.currentStudyIsoDate || loaded.currentStudyDate || "";
   const isSameStudyDate = loadedStudyIsoDate === TODAY;
+  const {
+    weeklySchedule: loadedWeeklySchedule,
+    dailySchedule: storedDailySchedule,
+  } = resolveLoadedScheduleSources({
+    isCurrentRoadmap,
+    isSameStudyDate,
+    loadedSchedule: loaded.schedule,
+    lastScheduleSnapshot: loaded.lastScheduleSnapshot,
+    loadedWeeklySchedule: loaded.weeklySchedule,
+    fallbackWeeklySchedule: initial.weeklySchedule,
+  });
+  const loadedDailySchedule =
+    storedDailySchedule ||
+    todayScheduleFromWeekly(
+      loadedWeeklySchedule,
+      roadmapData,
+      mergedSettings.studyStartDate,
+    );
   return {
     ...initial,
     ...loaded,
@@ -2102,18 +2129,7 @@ function normalizeLoadedState(value) {
       ? []
       : hydrateSchedule(
           withDistributedQuestionTargets(
-            normalizeScheduleItems(
-              isCurrentRoadmap &&
-                isSameStudyDate &&
-                Array.isArray(loaded.schedule)
-                ? loaded.schedule
-                : todayScheduleFromWeekly(
-                    initial.weeklySchedule,
-                    roadmapData,
-                    mergedSettings.studyStartDate,
-                  ),
-              scheduleConfig,
-            ),
+            normalizeScheduleItems(loadedDailySchedule, scheduleConfig),
             scheduleConfig,
             roadmapData,
           ),
@@ -2121,9 +2137,7 @@ function normalizeLoadedState(value) {
         ),
     weeklySchedule: withDistributedQuestionTargets(
       normalizeScheduleItems(
-        isCurrentRoadmap && Array.isArray(loaded.weeklySchedule)
-          ? loaded.weeklySchedule
-          : initial.weeklySchedule,
+        loadedWeeklySchedule,
         scheduleConfig,
       ),
       scheduleConfig,
@@ -3357,6 +3371,8 @@ export default function App() {
       ? "Conectando ao Supabase..."
       : "Supabase não configurado; usando cache local.",
   );
+  const [availableBuildId, setAvailableBuildId] = useState("");
+  const [updatingApp, setUpdatingApp] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [
     dismissedPreviousDayQuestionAlertId,
@@ -3519,6 +3535,8 @@ export default function App() {
     activeExamKeyState,
     storageProfileKeyState,
   ]);
+  const latestAppStateRef = useRef(appState);
+  latestAppStateRef.current = appState;
 
   useEffect(() => {
     let active = true;
@@ -3567,12 +3585,11 @@ export default function App() {
         portugues?.topics.find((t) => t.title.includes("Reconhecimento")),
       );
 
-      const savePromise = stateSaveQueueRef.current
-        .catch((error) => {
-          console.error("Erro no salvamento anterior do Supabase:", error);
-        })
-        .then(() => saveStateToSupabase(appState));
-      stateSaveQueueRef.current = savePromise;
+      const savePromise = enqueueSerializedStateSave(
+        stateSaveQueueRef,
+        appState,
+        saveStateToSupabase,
+      );
       pendingStateSaveRef.current = savePromise;
       let result;
       try {
@@ -3600,6 +3617,90 @@ export default function App() {
 
     return () => clearTimeout(timeout);
   }, [appState, cloudLoading]);
+
+  useEffect(() => {
+    if (cloudLoading || import.meta.env.DEV) return undefined;
+
+    let active = true;
+    let checking = false;
+    const checkForUpdate = async () => {
+      if (!active || checking) return;
+      checking = true;
+      try {
+        const publishedBuildId = await fetchPublishedBuildId();
+        if (
+          active &&
+          isUpdateAvailable(
+            import.meta.env.VITE_APP_BUILD_ID,
+            publishedBuildId,
+          )
+        ) {
+          setAvailableBuildId(publishedBuildId);
+        }
+      } catch (error) {
+        if (active) {
+          console.warn("Não foi possível verificar atualizações:", error);
+        }
+      } finally {
+        checking = false;
+      }
+    };
+    const checkWhenVisible = () => {
+      if (document.visibilityState === "visible") void checkForUpdate();
+    };
+
+    void checkForUpdate();
+    const interval = window.setInterval(checkWhenVisible, 60_000);
+    window.addEventListener("focus", checkWhenVisible);
+    document.addEventListener("visibilitychange", checkWhenVisible);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", checkWhenVisible);
+      document.removeEventListener("visibilitychange", checkWhenVisible);
+    };
+  }, [cloudLoading]);
+
+  async function updateApplicationNow() {
+    if (!availableBuildId || updatingApp) return;
+    setUpdatingApp(true);
+    try {
+      while (true) {
+        const stateToPersist = latestAppStateRef.current;
+        const savePromise = enqueueSerializedStateSave(
+          stateSaveQueueRef,
+          stateToPersist,
+          saveStateToSupabase,
+        );
+        pendingStateSaveRef.current = savePromise;
+
+        let result;
+        try {
+          result = await savePromise;
+        } finally {
+          if (pendingStateSaveRef.current === savePromise) {
+            pendingStateSaveRef.current = null;
+          }
+        }
+
+        if (supabase && !result.ok) {
+          throw (
+            result.error ||
+            new Error("Não foi possível salvar os dados no Supabase.")
+          );
+        }
+        if (latestAppStateRef.current === stateToPersist) break;
+      }
+
+      window.location.reload();
+    } catch (error) {
+      console.error("Falha ao salvar antes de atualizar a aplicação:", error);
+      setCloudStatus(
+        "Atualização pausada: não foi possível salvar seus dados. Tente novamente.",
+      );
+      setUpdatingApp(false);
+    }
+  }
 
   const subjectsList = useMemo(
     () =>
@@ -4046,7 +4147,13 @@ export default function App() {
       ).sort(
         (a, b) => Number(Boolean(b.carryover)) - Number(Boolean(a.carryover)),
       );
-      if (!expectedSchedule.length) return current;
+      if (!expectedSchedule.length) {
+        return current.filter(
+          (item) =>
+            Number(item.week) !== Number(currentStudyWeek) ||
+            item.dayKey !== currentStudyDayKey,
+        );
+      }
       const merged = expectedSchedule.map((expected) => {
         const saved = currentToday.find(
           (item) =>
@@ -4058,24 +4165,15 @@ export default function App() {
               Boolean(item.carryover) === Boolean(expected.carryover)),
         );
         return saved
-          ? {
-              ...expected,
-              status: saved.status,
+          ? mergeStudyProgress(expected, {
+              ...saved,
               elapsedSeconds: liveElapsedSeconds(saved),
-              completedAt: saved.completedAt || null,
-              timerStartedAt: saved.timerStartedAt || null,
-              baseElapsedSeconds:
-                saved.baseElapsedSeconds || saved.elapsedSeconds || 0,
-            }
+            })
           : expected;
       });
-      const currentIds = currentToday
-        .map((item) => `${item.id}:${item.status}:${item.elapsedSeconds || 0}`)
-        .join("|");
-      const mergedIds = merged
-        .map((item) => `${item.id}:${item.status}:${item.elapsedSeconds || 0}`)
-        .join("|");
-      return currentIds === mergedIds ? current : merged;
+      return JSON.stringify(currentToday) === JSON.stringify(merged)
+        ? current
+        : merged;
     });
   }, [effectiveWeeklySchedule, roadmap, currentStudyDayKey, currentStudyWeek]);
 
@@ -5640,59 +5738,26 @@ export default function App() {
       manualScheduleWeek,
       manualScheduleDraft,
     );
-    const historicalIds = [
-      ...questionSessions,
-      ...errors,
-      ...notes,
-    ].flatMap((record) => (record.sourceBlockId ? [record.sourceBlockId] : []));
-    const progressItems = schedule
-      .filter((item) => Number(item.week) === Number(manualScheduleWeek))
-      .map((item) => {
-        const elapsedSeconds = liveElapsedSeconds(item);
-        return {
+    const nextState = applyManualScheduleEdit(
+      {
+        schedule: schedule.map((item) => ({
           ...item,
-          elapsedSeconds,
-          baseElapsedSeconds: Math.max(
-            Number(item.baseElapsedSeconds || 0),
-            elapsedSeconds,
-          ),
-        };
-      });
-    const nextWeeklySchedule = mergeManualScheduleWeek({
-      weeklySchedule,
-      progressItems,
-      newItems: newWeekItems,
-      week: manualScheduleWeek,
-      historicalIds,
-    });
-    setWeeklySchedule(nextWeeklySchedule);
-
-    if (Number(manualScheduleWeek) === Number(currentStudyWeek)) {
-      const todayItems = scheduleFromWeekly(
-        nextWeeklySchedule,
-        roadmap,
+          elapsedSeconds: liveElapsedSeconds(item),
+        })),
+        weeklySchedule,
+        questionSessions,
+        errors,
+        notes,
         currentStudyWeek,
         currentStudyDayKey,
-      );
-      const todayCarryovers = schedule.filter(
-        (item) =>
-          item.carryover &&
-          Number(item.week) === Number(currentStudyWeek) &&
-          item.dayKey === currentStudyDayKey,
-      );
-      const nextTodaySchedule = mergeUniqueScheduleItems(
-        todayItems,
-        todayCarryovers,
-      );
-      setSchedule(nextTodaySchedule);
-      if (
-        activeBlockId &&
-        !nextTodaySchedule.some((item) => item.id === activeBlockId)
-      ) {
-        activeTimerRef.current = null;
-        setActiveBlockId(null);
-      }
-    }
+        lastScheduleSnapshot: schedule,
+      },
+      {
+      newItems: newWeekItems,
+      week: manualScheduleWeek,
+      },
+    );
+    setWeeklySchedule(nextState.weeklySchedule);
     setScheduleWeekFilter(Number(manualScheduleWeek));
     setManualScheduleOpen(false);
     setManualScheduleMessage(`Ciclo ${manualScheduleWeek} salva manualmente.`);
@@ -8956,6 +9021,30 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,#f5eadb,transparent_32%),linear-gradient(135deg,#fafaf9,#f5f5f4_45%,#ede7de)] text-stone-950">
+      <AnimatePresence>
+        {availableBuildId && (
+          <motion.div
+            initial={{ opacity: 0, y: -16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -16 }}
+            role="alert"
+            aria-live="polite"
+            className="fixed left-1/2 top-4 z-[100] flex w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-white px-5 py-3 shadow-2xl"
+          >
+            <span className="font-black text-stone-950">
+              Nova atualização disponível
+            </span>
+            <button
+              type="button"
+              onClick={updateApplicationNow}
+              disabled={updatingApp}
+              className="rounded-xl bg-stone-950 px-4 py-2 text-sm font-black text-white transition hover:bg-stone-800 disabled:cursor-wait disabled:opacity-70"
+            >
+              {updatingApp ? "Salvando..." : "Atualizar agora"}
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <AnimatePresence>
         <VersionToast />
       </AnimatePresence>

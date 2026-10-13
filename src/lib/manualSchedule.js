@@ -31,6 +31,16 @@ function scheduleHasProgress(item, historicalIds) {
   );
 }
 
+function scheduleStatusPriority(status) {
+  return {
+    livre: -1,
+    pendente: 0,
+    pausado: 1,
+    andamento: 2,
+    concluido: 3,
+  }[status] ?? 0;
+}
+
 function preserveScheduleProgress(previous, next) {
   const elapsedSeconds = Math.max(
     Number(previous.elapsedSeconds || 0),
@@ -38,22 +48,30 @@ function preserveScheduleProgress(previous, next) {
     Number(next.elapsedSeconds || 0),
   );
   const sameDay = previous.dayKey === next.dayKey;
+  const status =
+    scheduleStatusPriority(previous.status) >=
+    scheduleStatusPriority(next.status)
+      ? previous.status
+      : next.status;
   return {
     ...previous,
     ...next,
     id: previous.id,
-    status:
-      previous.status === "pendente" && next.status === "concluido"
-        ? "concluido"
-        : previous.status || next.status,
+    status,
     elapsedSeconds,
     baseElapsedSeconds: sameDay
       ? Math.max(Number(previous.baseElapsedSeconds || 0), elapsedSeconds)
       : elapsedSeconds,
-    timerStartedAt: sameDay ? previous.timerStartedAt || null : null,
+    timerStartedAt: sameDay
+      ? next.timerStartedAt || previous.timerStartedAt || null
+      : null,
     completedAt: previous.completedAt || next.completedAt || null,
     archived: false,
   };
+}
+
+export function mergeStudyProgress(plannedItem, currentItem) {
+  return preserveScheduleProgress(currentItem, plannedItem);
 }
 
 export function mergeManualScheduleWeek({
@@ -147,4 +165,77 @@ export function mergeManualScheduleWeek({
       DAY_ORDER.indexOf(a.dayKey) - DAY_ORDER.indexOf(b.dayKey) ||
       Number(a.manualSlot || 0) - Number(b.manualSlot || 0),
   );
+}
+
+export function applyManualScheduleEdit(state, { newItems, week }) {
+  const sourceRecords = [
+    ...(state.questionSessions || []),
+    ...(state.errors || []),
+    ...(state.notes || []),
+  ];
+  const historicalIds = sourceRecords
+    .map((record) => record.sourceBlockId)
+    .filter(Boolean);
+  const progressItems = (state.schedule || [])
+    .filter((item) => Number(item.week) === Number(week))
+    .map((item) => {
+      const elapsedSeconds = Math.max(
+        Number(item.elapsedSeconds || 0),
+        Number(item.baseElapsedSeconds || 0),
+      );
+      return {
+        ...item,
+        elapsedSeconds,
+        baseElapsedSeconds: Math.max(
+          Number(item.baseElapsedSeconds || 0),
+          elapsedSeconds,
+        ),
+      };
+    });
+
+  return {
+    ...state,
+    weeklySchedule: mergeManualScheduleWeek({
+      weeklySchedule: state.weeklySchedule || [],
+      progressItems,
+      newItems,
+      week,
+      historicalIds,
+    }),
+  };
+}
+
+export function enqueueSerializedStateSave(queueRef, state, save) {
+  const savePromise = queueRef.current.then(() => save(state));
+  queueRef.current = savePromise.then(
+    () => undefined,
+    () => undefined,
+  );
+  return savePromise;
+}
+
+export function resolveLoadedScheduleSources({
+  isCurrentRoadmap,
+  isSameStudyDate,
+  loadedSchedule,
+  lastScheduleSnapshot,
+  loadedWeeklySchedule,
+  fallbackWeeklySchedule,
+}) {
+  const weeklySchedule =
+    isCurrentRoadmap && Array.isArray(loadedWeeklySchedule)
+      ? loadedWeeklySchedule
+      : fallbackWeeklySchedule;
+  const dailySchedule =
+    isCurrentRoadmap &&
+    isSameStudyDate &&
+    Array.isArray(loadedSchedule)
+      ? loadedSchedule
+      : isCurrentRoadmap &&
+          isSameStudyDate &&
+          Array.isArray(lastScheduleSnapshot)
+        ? lastScheduleSnapshot
+        : null;
+
+  return { weeklySchedule, dailySchedule };
 }

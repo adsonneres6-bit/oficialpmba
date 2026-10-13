@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeManualScheduleWeek } from "./manualSchedule.js";
+import {
+  applyManualScheduleEdit,
+  enqueueSerializedStateSave,
+  mergeManualScheduleWeek,
+  mergeStudyProgress,
+  resolveLoadedScheduleSources,
+} from "./manualSchedule.js";
 
 function scheduleItem(id, week, dayKey, topicId, properties = {}) {
   return {
@@ -121,4 +127,303 @@ test("preserves saved study data through a JSON persistence round trip", () => {
   assert.equal(savedItem.status, "concluido");
   assert.equal(savedItem.elapsedSeconds, 5400);
   assert.equal(savedItem.completedAt, "2026-10-10T10:00:00Z");
+});
+
+test("manual edit changes only the weekly plan and preserves the full study state", () => {
+  const state = {
+    activeExamKey: "pmba",
+    storageProfileKey: "user__pmba",
+    currentStudyWeek: 4,
+    currentStudyDayKey: "quarta",
+    schedule: [
+      scheduleItem("today-completed", 4, "quarta", "topic-a", {
+        status: "concluido",
+        elapsedSeconds: 2100,
+        baseElapsedSeconds: 2100,
+        completedAt: "2026-10-13T11:00:00Z",
+      }),
+      scheduleItem("today-pending", 4, "quarta", "topic-b"),
+    ],
+    lastScheduleSnapshot: [
+      scheduleItem("today-completed", 4, "quarta", "topic-a", {
+        status: "concluido",
+        elapsedSeconds: 2100,
+        completedAt: "2026-10-13T11:00:00Z",
+      }),
+    ],
+    weeklySchedule: [
+      scheduleItem("today-completed", 4, "quarta", "topic-a", {
+        status: "concluido",
+        elapsedSeconds: 2100,
+        baseElapsedSeconds: 2100,
+        completedAt: "2026-10-13T11:00:00Z",
+      }),
+      scheduleItem("today-pending", 4, "quarta", "topic-b"),
+      scheduleItem("next-week", 5, "segunda", "topic-c", {
+        carryover: true,
+        carryoverSourceId: "source-c",
+      }),
+    ],
+    questionSessions: [
+      {
+        id: "session-a",
+        sourceBlockId: "today-completed",
+        done: 25,
+        correct: 20,
+        wrong: 5,
+        time: 35,
+      },
+    ],
+    errors: [{ id: "error-a", sourceBlockId: "today-completed" }],
+    notes: [{ id: "note-a", sourceBlockId: "today-completed" }],
+    reviews: [{ id: "review-a", status: "concluida" }],
+    simulatedTests: [{ id: "test-a", total: 60, correct: 48 }],
+    cyclePerformanceSnapshots: [{ week: 3, cycleCompleted: true }],
+    questionCarryovers: [{ id: "carry-a", missingQuestions: 8 }],
+    settings: { studyStartDate: "2026-10-01" },
+  };
+  const historyFields = [
+    "activeExamKey",
+    "storageProfileKey",
+    "currentStudyWeek",
+    "currentStudyDayKey",
+    "schedule",
+    "lastScheduleSnapshot",
+    "questionSessions",
+    "errors",
+    "notes",
+    "reviews",
+    "simulatedTests",
+    "cyclePerformanceSnapshots",
+    "questionCarryovers",
+    "settings",
+  ];
+  const next = applyManualScheduleEdit(state, {
+    week: 4,
+    newItems: [
+      scheduleItem("new-topic-a", 4, "quinta", "topic-a"),
+      scheduleItem("new-topic-d", 4, "sexta", "topic-d"),
+    ],
+  });
+
+  historyFields.forEach((field) => assert.deepEqual(next[field], state[field]));
+  assert.equal(
+    next.weeklySchedule.find((item) => item.id === "today-completed").status,
+    "concluido",
+  );
+  assert.equal(
+    next.weeklySchedule.find((item) => item.id === "today-completed").elapsedSeconds,
+    2100,
+  );
+  assert.equal(next.weeklySchedule.some((item) => item.id === "next-week"), true);
+  assert.equal(next.currentStudyWeek, 4);
+});
+
+test("a removed completed item remains archived and links split topics to completion", () => {
+  const state = {
+    schedule: [],
+    weeklySchedule: [
+      scheduleItem("completed-source", 2, "segunda", "topic-a", {
+        topicIds: ["topic-a", "topic-b"],
+        status: "concluido",
+        elapsedSeconds: 3200,
+        completedAt: "2026-10-12T10:00:00Z",
+      }),
+    ],
+    questionSessions: [
+      { id: "session-source", sourceBlockId: "completed-source", done: 10 },
+    ],
+    errors: [],
+    notes: [],
+    currentStudyWeek: 2,
+  };
+  const next = applyManualScheduleEdit(state, {
+    week: 2,
+    newItems: [
+      scheduleItem("split-a", 2, "terça", "topic-a"),
+      scheduleItem("split-b", 2, "quarta", "topic-b"),
+    ],
+  });
+  const source = next.weeklySchedule.find(
+    (item) => item.id === "completed-source",
+  );
+
+  assert.equal(source.archived, true);
+  assert.equal(source.elapsedSeconds, 3200);
+  assert.equal(source.completedAt, "2026-10-12T10:00:00Z");
+  assert.equal(
+    next.weeklySchedule.find((item) => item.id === "split-a").status,
+    "concluido",
+  );
+  assert.equal(
+    next.weeklySchedule.find((item) => item.id === "split-b").status,
+    "concluido",
+  );
+  assert.equal(next.questionSessions[0].sourceBlockId, "completed-source");
+});
+
+test("daily reconciliation applies planning without regressing completed progress", () => {
+  const planned = scheduleItem("stable-id", 1, "quinta", "topic-a", {
+    status: "pendente",
+    minutes: 90,
+  });
+  const current = scheduleItem("stable-id", 1, "quarta", "topic-a", {
+    status: "concluido",
+    elapsedSeconds: 2400,
+    baseElapsedSeconds: 2400,
+    completedAt: "2026-10-13T09:00:00Z",
+    minutes: 60,
+  });
+  const reconciled = mergeStudyProgress(planned, current);
+
+  assert.equal(reconciled.id, "stable-id");
+  assert.equal(reconciled.dayKey, "quinta");
+  assert.equal(reconciled.minutes, 90);
+  assert.equal(reconciled.status, "concluido");
+  assert.equal(reconciled.elapsedSeconds, 2400);
+  assert.equal(reconciled.completedAt, "2026-10-13T09:00:00Z");
+});
+
+test("simulated Supabase JSONB save and reload retains edited plan and history", async () => {
+  const initial = {
+    currentStudyWeek: 6,
+    currentStudyDayKey: "sexta",
+    schedule: [
+      scheduleItem("daily", 6, "sexta", "topic-a", {
+        status: "concluido",
+        elapsedSeconds: 3000,
+      }),
+    ],
+    weeklySchedule: [
+      scheduleItem("daily", 6, "sexta", "topic-a", {
+        status: "concluido",
+        elapsedSeconds: 3000,
+      }),
+    ],
+    questionSessions: [{ id: "session", done: 30, correct: 24, wrong: 6 }],
+    errors: [{ id: "error", status: "pendente" }],
+    notes: [{ id: "note", text: "Histórico" }],
+    reviews: [{ id: "review", status: "concluida" }],
+    settings: { studyStartDate: "2026-10-01" },
+  };
+  const edited = applyManualScheduleEdit(initial, {
+    week: 6,
+    newItems: [
+      scheduleItem("edited-id", 6, "sexta", "topic-a"),
+      scheduleItem("new-id", 6, "sabado", "topic-b"),
+    ],
+  });
+  const simulatedStudyAppStates = new Map();
+  const otherExamState = {
+    weeklySchedule: [
+      scheduleItem("other-exam-item", 2, "segunda", "other-topic"),
+    ],
+    questionSessions: [{ id: "other-exam-session", done: 17, correct: 12 }],
+  };
+  simulatedStudyAppStates.set(
+    "other-profile__exam",
+    JSON.parse(JSON.stringify(otherExamState)),
+  );
+  const mockSupabaseUpsert = async (deviceId, jsonbState) => {
+    simulatedStudyAppStates.set(
+      deviceId,
+      JSON.parse(JSON.stringify(jsonbState)),
+    );
+  };
+
+  await mockSupabaseUpsert("profile__exam", edited);
+  const loadedAfterReload = simulatedStudyAppStates.get("profile__exam");
+
+  assert.equal(loadedAfterReload.currentStudyWeek, 6);
+  assert.equal(loadedAfterReload.weeklySchedule.length, 2);
+  assert.equal(loadedAfterReload.weeklySchedule[0].id, "daily");
+  assert.equal(loadedAfterReload.weeklySchedule[0].status, "concluido");
+  assert.equal(loadedAfterReload.weeklySchedule[0].elapsedSeconds, 3000);
+  assert.deepEqual(loadedAfterReload.questionSessions, initial.questionSessions);
+  assert.deepEqual(loadedAfterReload.errors, initial.errors);
+  assert.deepEqual(loadedAfterReload.notes, initial.notes);
+  assert.deepEqual(loadedAfterReload.reviews, initial.reviews);
+  assert.deepEqual(
+    simulatedStudyAppStates.get("other-profile__exam"),
+    otherExamState,
+  );
+});
+
+test("serialized asynchronous writes always leave the newest snapshot last", async () => {
+  const queueRef = { current: Promise.resolve() };
+  const writtenSnapshots = [];
+  let releaseFirstWrite;
+  const firstWriteBlocked = new Promise((resolve) => {
+    releaseFirstWrite = resolve;
+  });
+  const save = async (snapshot) => {
+    if (snapshot.revision === 1) await firstWriteBlocked;
+    writtenSnapshots.push(snapshot.revision);
+  };
+
+  const first = enqueueSerializedStateSave(queueRef, { revision: 1 }, save);
+  const second = enqueueSerializedStateSave(queueRef, { revision: 2 }, save);
+  releaseFirstWrite();
+  await Promise.all([first, second]);
+
+  assert.deepEqual(writtenSnapshots, [1, 2]);
+});
+
+test("serialized writes recover after a failure without suppressing the error", async () => {
+  const queueRef = { current: Promise.resolve() };
+  const failed = enqueueSerializedStateSave(queueRef, { revision: 1 }, async () => {
+    throw new Error("write failed");
+  });
+  const succeeded = enqueueSerializedStateSave(
+    queueRef,
+    { revision: 2 },
+    async (snapshot) => snapshot.revision,
+  );
+
+  await assert.rejects(failed, /write failed/);
+  assert.equal(await succeeded, 2);
+});
+
+test("reload after a date change derives today's agenda from the saved weekly plan", () => {
+  const savedWeeklySchedule = [
+    scheduleItem("manual-saved-id", 3, "quinta", "manual-topic", {
+      status: "concluido",
+      elapsedSeconds: 1800,
+    }),
+  ];
+  const sources = resolveLoadedScheduleSources({
+    isCurrentRoadmap: true,
+    isSameStudyDate: false,
+    loadedSchedule: [
+      scheduleItem("old-day-id", 2, "quarta", "old-topic"),
+    ],
+    lastScheduleSnapshot: [
+      scheduleItem("last-snapshot-id", 2, "quarta", "old-topic"),
+    ],
+    loadedWeeklySchedule: savedWeeklySchedule,
+    fallbackWeeklySchedule: [
+      scheduleItem("fresh-generated-id", 1, "segunda", "initial-topic"),
+    ],
+  });
+
+  assert.deepEqual(sources.weeklySchedule, savedWeeklySchedule);
+  assert.equal(sources.dailySchedule, null);
+});
+
+test("reload on the same date preserves the saved empty daily schedule", () => {
+  const sources = resolveLoadedScheduleSources({
+    isCurrentRoadmap: true,
+    isSameStudyDate: true,
+    loadedSchedule: [],
+    lastScheduleSnapshot: [
+      scheduleItem("fallback-id", 1, "segunda", "topic-a"),
+    ],
+    loadedWeeklySchedule: [],
+    fallbackWeeklySchedule: [
+      scheduleItem("initial-id", 1, "segunda", "topic-b"),
+    ],
+  });
+
+  assert.deepEqual(sources.weeklySchedule, []);
+  assert.deepEqual(sources.dailySchedule, []);
 });
