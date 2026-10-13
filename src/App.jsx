@@ -10,6 +10,12 @@ import {
 } from "./lib/manualSchedule.js";
 import { applyExamRoadmapEdit } from "./lib/examRoadmap.js";
 import {
+  createProfileStorageMatcher,
+  deleteProfileRowsFromSupabase,
+  resetProfilePersistence,
+  ResetPersistenceError,
+} from "./lib/resetPersistence.js";
+import {
   fetchPublishedBuildId,
   isUpdateAvailable,
 } from "./lib/appUpdates.js";
@@ -2195,35 +2201,16 @@ function saveStateToLocalCache(state) {
     console.error("Erro ao salvar cache local:", error);
   }
 }
-function clearLocalProfileData() {
-  if (typeof window === "undefined") return;
-  const cachePrefix = `study_app_state_cache__${USER_PROFILE_KEY}__`;
-  const alertPrefix = `study_app_previous_day_question_alert_ack__${USER_PROFILE_KEY}__`;
-  const keysToRemove = [];
-
-  for (let index = 0; index < localStorage.length; index += 1) {
-    const key = localStorage.key(index);
-    if (
-      key === ACTIVE_EXAM_LOCAL_KEY ||
-      key === DEVICE_ID_KEY ||
-      key?.startsWith(cachePrefix) ||
-      key?.startsWith(alertPrefix)
-    ) {
-      keysToRemove.push(key);
-    }
-  }
-
-  keysToRemove.forEach((key) => localStorage.removeItem(key));
-}
 async function deleteProfileDataFromSupabase() {
   if (!supabase) return false;
-  const escapedPrefix = `${USER_PROFILE_KEY}__`.replace(/[\\%_]/g, "\\$&");
-  const { error } = await supabase
-    .from(SUPABASE_TABLE)
-    .delete()
-    .like("device_id", `${escapedPrefix}%`);
-  if (error) {
-    console.error("Erro ao apagar dados do perfil no Supabase:", error);
+  try {
+    await deleteProfileRowsFromSupabase(
+      supabase,
+      SUPABASE_TABLE,
+      USER_PROFILE_KEY,
+    );
+  } catch (error) {
+    console.error("Erro ao apagar/verificar dados no Supabase:", error);
     throw error;
   }
   return true;
@@ -3368,7 +3355,8 @@ export default function App() {
   const pdfInputRef = useRef(null);
   const resetProgressRef = useRef(false);
   const clearingProfileRef = useRef(false);
-  const skipPersistenceSnapshotRef = useRef(null);
+  const [isResetting, setIsResetting] = useState(false);
+  const persistenceTimeoutRef = useRef(null);
   const pendingStateSaveRef = useRef(null);
   const stateSaveQueueRef = useRef(Promise.resolve());
   const [cloudLoading, setCloudLoading] = useState(Boolean(supabase));
@@ -3433,6 +3421,13 @@ export default function App() {
     );
   }
 
+  function enqueueAppStateSave(state, save = saveStateToSupabase) {
+    if (resetProgressRef.current) {
+      return Promise.resolve({ ok: false, source: "reset" });
+    }
+    return enqueueSerializedStateSave(stateSaveQueueRef, state, save);
+  }
+
   function openConfirmDialog({
     title,
     message,
@@ -3462,6 +3457,7 @@ export default function App() {
   }
 
   function dismissPreviousDayQuestionGoalPopup() {
+    if (resetProgressRef.current) return;
     const alertId = previousDayQuestionGoalReport?.iso || "";
     setDismissedPreviousDayQuestionAlertId(alertId);
     if (typeof window !== "undefined") {
@@ -3580,13 +3576,8 @@ export default function App() {
     if (cloudLoading) return undefined;
 
     const timeout = setTimeout(async () => {
-      if (clearingProfileRef.current) return;
-      if (skipPersistenceSnapshotRef.current) {
-        const isResetSnapshot =
-          JSON.stringify(appState) === skipPersistenceSnapshotRef.current;
-        skipPersistenceSnapshotRef.current = null;
-        if (isResetSnapshot) return;
-      }
+      persistenceTimeoutRef.current = null;
+      if (resetProgressRef.current || clearingProfileRef.current) return;
       const portugues = appState.roadmap.find(
         (s) => s.id === "lingua_portuguesa",
       );
@@ -3596,11 +3587,7 @@ export default function App() {
         portugues?.topics.find((t) => t.title.includes("Reconhecimento")),
       );
 
-      const savePromise = enqueueSerializedStateSave(
-        stateSaveQueueRef,
-        appState,
-        saveStateToSupabase,
-      );
+      const savePromise = enqueueAppStateSave(appState);
       pendingStateSaveRef.current = savePromise;
       let result;
       try {
@@ -3625,8 +3612,14 @@ export default function App() {
             : "Falha ao salvar no Supabase; backup local atualizado.",
       );
     }, 1500);
+    persistenceTimeoutRef.current = timeout;
 
-    return () => clearTimeout(timeout);
+    return () => {
+      clearTimeout(timeout);
+      if (persistenceTimeoutRef.current === timeout) {
+        persistenceTimeoutRef.current = null;
+      }
+    };
   }, [appState, cloudLoading]);
 
   useEffect(() => {
@@ -3678,8 +3671,7 @@ export default function App() {
     try {
       while (true) {
         const stateToPersist = latestAppStateRef.current;
-        const savePromise = enqueueSerializedStateSave(
-          stateSaveQueueRef,
+        const savePromise = enqueueAppStateSave(
           stateToPersist,
           saveStateToSupabase,
         );
@@ -7900,7 +7892,7 @@ export default function App() {
       deletedBuiltInExamKeys,
     };
     applyLoadedState(nextState);
-    await saveStateToSupabase(nextState);
+    await enqueueAppStateSave(nextState);
     setView("dashboard");
   }
 
@@ -8082,7 +8074,7 @@ export default function App() {
         deletedBuiltInExamKeys: nextDeletedBuiltInExamKeys,
       };
       applyLoadedState(nextState);
-      await saveStateToSupabase(nextState);
+      await enqueueAppStateSave(nextState);
       setView("dashboard");
     } else {
       const nextState = {
@@ -8090,7 +8082,7 @@ export default function App() {
         customExams: nextCustomExams,
         deletedBuiltInExamKeys: nextDeletedBuiltInExamKeys,
       };
-      await saveStateToSupabase(nextState);
+      await enqueueAppStateSave(nextState);
     }
 
     if (editingExamKey === exam.key) {
@@ -8181,8 +8173,7 @@ export default function App() {
         nextState.customExams = nextCustomExams;
         nextState.deletedBuiltInExamKeys = deletedBuiltInExamKeys;
 
-        const saveResult = await enqueueSerializedStateSave(
-          stateSaveQueueRef,
+        const saveResult = await enqueueAppStateSave(
           nextState,
           saveStateToSupabase,
         );
@@ -8270,8 +8261,7 @@ export default function App() {
         }
 
         if (updatedExamState && !isActiveExam) {
-          const inactiveSaveResult = await enqueueSerializedStateSave(
-            stateSaveQueueRef,
+          const inactiveSaveResult = await enqueueAppStateSave(
             updatedExamState,
             (state) =>
               saveStateToSupabase(state, { saveProfileIndex: false }),
@@ -8284,8 +8274,7 @@ export default function App() {
           }
         }
 
-        const catalogSaveResult = await enqueueSerializedStateSave(
-          stateSaveQueueRef,
+        const catalogSaveResult = await enqueueAppStateSave(
           activeStateAfterEdit,
           saveStateToSupabase,
         );
@@ -8781,8 +8770,8 @@ export default function App() {
     openConfirmDialog({
       title: "Deseja resetar?",
       message:
-        "Essa ação vai apagar todos os dados e editais salvos neste dispositivo e no Supabase. Essa ação não pode ser desfeita.",
-      confirmLabel: "Sim",
+        "Esta ação apagará permanentemente todo o progresso, histórico, cronogramas e editais deste perfil, em todos os editais, do armazenamento local e do Supabase. Não pode ser desfeita.",
+      confirmLabel: "Apagar permanentemente",
       cancelLabel: "Não",
       tone: "red",
       onConfirm: resetSystemNow,
@@ -8790,132 +8779,59 @@ export default function App() {
   }
 
   async function resetSystemNow() {
+    if (resetProgressRef.current) return;
     resetProgressRef.current = true;
     clearingProfileRef.current = true;
+    setIsResetting(true);
     setCloudLoading(true);
-    setCloudStatus("Apagando dados e editais...");
-    const fresh = createInitialState();
-    const resetSnapshot = { ...fresh };
-    delete resetSnapshot.deletedBuiltInExamKeys;
-    skipPersistenceSnapshotRef.current = JSON.stringify(resetSnapshot);
-    activeTimerRef.current = null;
-    setActiveBlockId(null);
-    setSchedule(fresh.schedule);
-    setWeeklySchedule(fresh.weeklySchedule);
-    setRoadmap(fresh.roadmap);
-    setCustomExams([]);
-    setDeletedBuiltInExamKeys([]);
-    setActiveExamKeyState(fresh.activeExamKey);
-    setStorageProfileKeyState(fresh.storageProfileKey);
-    setScheduleConfig(defaultScheduleConfig());
-    setCycleDraftConfig(defaultScheduleConfig());
-    setErrors([]);
-    setReviews([]);
-    setNotes([]);
-    setQuestionSessions([]);
-    setSimulatedTests([]);
-    setQuestionCarryovers(fresh.questionCarryovers);
-    setSettings(fresh.settings);
-    setCurrentStudyDayKey(TODAY_DAY_KEY);
-    setCurrentStudyWeek(fresh.currentStudyWeek);
-    setView("dashboard");
-    setWeeklyDayFilter(TODAY_DAY_KEY);
-    setWeeklyWeekFilter(fresh.currentStudyWeek);
-    setScheduleWeekFilter(fresh.currentStudyWeek);
-    setScheduleDayFilter("all");
-    setScheduleSubjectFrequencyFilter("all");
-    setRoadmapSubject("all");
-    setRoadmapStatus("todos");
-    setQuery("");
-    setReviewFilter("atual");
-    setErrorSubjectFilter("all");
-    setErrorStatusFilter("pendentes");
-    setErrorFormOpen(false);
-    setErrorForm({ subjectId: "", topicId: "", error: "", fix: "" });
-    setErrorFormMessage("");
-    setCorrectionForm({ id: null, fix: "" });
-    setEditingErrorId(null);
-    setQuestionForm({
-      subjectId: "",
-      topicId: "",
-      done: "",
-      correct: "",
-      time: "",
-      notes: "",
-    });
-    setQuestionFilterSubject("all");
-    setQuestionFilterTopic("all");
-    setSimulatedForm({
-      title: defaultSimulatedTitle([]),
-      total: "",
-      correct: "",
-      essayScore: "",
-      timeSpent: "",
-      date: toBRDate(parseISODate(TODAY)),
-      notes: "",
-      subjects: {},
-    });
-    setSimulatedMessage("");
-    setSimulatedCompareA("");
-    setSimulatedCompareB("");
-    setNoteForm({ subjectId: "", topicId: "", title: "", text: "" });
-    setNoteFormOpen(false);
-    setEditingNoteId(null);
-    setNoteSubjectFilter("all");
-    setNoteTopicFilter("all");
-    setNoteSearch("");
-    setNoteFormMessage("");
-    setImportMode("manual");
-    setImportForm({ subject: "", topics: [""] });
-    setImportMessage("");
-    setCompletionBlock(null);
-    setDismissedPreviousDayQuestionAlertId("");
-    setManualScheduleWeek(fresh.currentStudyWeek);
-    resetExamCreatorForm();
-    setExamCreatorOpen(false);
-
-    let localClearError = null;
-    let supabaseClearError = null;
-    try {
-      if (pendingStateSaveRef.current) {
-        try {
-          await pendingStateSaveRef.current;
-        } catch (error) {
-          console.error("Falha ao aguardar salvamento pendente:", error);
-        }
-      }
-      try {
-        clearLocalProfileData();
-      } catch (error) {
-        localClearError = error;
-        console.error("Erro ao limpar dados locais do perfil:", error);
-      }
-      try {
-        await deleteProfileDataFromSupabase();
-      } catch (error) {
-        supabaseClearError = error;
-      }
-    } finally {
-      clearingProfileRef.current = false;
-      setCloudLoading(false);
+    setCloudStatus("Aguardando gravações e apagando dados...");
+    if (persistenceTimeoutRef.current) {
+      clearTimeout(persistenceTimeoutRef.current);
+      persistenceTimeoutRef.current = null;
     }
 
-    if (localClearError || supabaseClearError) {
-      const failedStores = [
-        localClearError && "LocalStorage",
-        supabaseClearError && "Supabase",
-      ]
-        .filter(Boolean)
-        .join(" e ");
-      setCloudStatus(
-        `Falha ao limpar ${failedStores}. Verifique a conexão/permissões e o console.`,
-      );
-    } else if (!supabase) {
-      setCloudStatus(
-        "Dados e editais removidos do LocalStorage. Supabase não configurado.",
-      );
-    } else {
-      setCloudStatus("Todos os dados e editais foram apagados.");
+    try {
+      const result = await resetProfilePersistence({
+        queueRef: stateSaveQueueRef,
+        localStorage: window.localStorage,
+        localKeyMatcher: createProfileStorageMatcher(USER_PROFILE_KEY),
+        deleteRemote: supabase ? deleteProfileDataFromSupabase : undefined,
+      });
+
+      if (!result.remoteCleared) {
+        setCloudStatus(
+          "Dados locais removidos, mas a limpeza do Supabase não foi executada porque o serviço não está configurado. Recarregando sem confirmar a limpeza remota.",
+        );
+      } else {
+        setCloudStatus(
+          "Reset concluído: dados locais removidos e exclusão do Supabase confirmada. Recarregando...",
+        );
+      }
+      window.setTimeout(() => window.location.reload(), 900);
+    } catch (error) {
+      console.error("Falha ao resetar dados do aplicativo:", error);
+      if (
+        error instanceof ResetPersistenceError &&
+        error.rollbackError
+      ) {
+        console.error(
+          "Falha ao restaurar o cache local após reset incompleto:",
+          error.rollbackError,
+        );
+      }
+      const step =
+        error instanceof ResetPersistenceError ? error.step : "reset";
+      const message =
+        step === "remote storage cleanup"
+          ? "Não foi possível confirmar a exclusão no Supabase. Os dados locais foram restaurados quando possível; o reset não foi concluído. Verifique a conexão/permissões e tente novamente."
+          : step === "local storage cleanup"
+            ? "Não foi possível limpar o armazenamento local. O reset não foi concluído."
+            : "Não foi possível concluir o reset. Nenhuma mensagem de sucesso foi emitida.";
+      setCloudStatus(message);
+      resetProgressRef.current = false;
+      clearingProfileRef.current = false;
+      setCloudLoading(false);
+      setIsResetting(false);
     }
   }
 
@@ -14523,9 +14439,10 @@ export default function App() {
                   </button>
                   <button
                     onClick={resetSystem}
+                    disabled={isResetting}
                     className="w-full rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-left font-semibold text-red-700"
                   >
-                    Resetar progresso
+                    {isResetting ? "Apagando dados..." : "Resetar progresso"}
                   </button>
                 </Card>
               </div>
