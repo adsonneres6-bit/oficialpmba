@@ -3578,15 +3578,6 @@ export default function App() {
     const timeout = setTimeout(async () => {
       persistenceTimeoutRef.current = null;
       if (resetProgressRef.current || clearingProfileRef.current) return;
-      const portugues = appState.roadmap.find(
-        (s) => s.id === "lingua_portuguesa",
-      );
-
-      console.log(
-        "Português:",
-        portugues?.topics.find((t) => t.title.includes("Reconhecimento")),
-      );
-
       const savePromise = enqueueAppStateSave(appState);
       pendingStateSaveRef.current = savePromise;
       let result;
@@ -3601,8 +3592,6 @@ export default function App() {
           pendingStateSaveRef.current = null;
         }
       }
-
-      console.log("Resultado:", result);
 
       setCloudStatus(
         result.ok
@@ -8821,9 +8810,13 @@ export default function App() {
       }
       const step =
         error instanceof ResetPersistenceError ? error.step : "reset";
+      const remoteCause =
+        error instanceof ResetPersistenceError ? error.cause : null;
       const message =
         step === "remote storage cleanup"
-          ? "Não foi possível confirmar a exclusão no Supabase. Os dados locais foram restaurados quando possível; o reset não foi concluído. Verifique a conexão/permissões e tente novamente."
+          ? remoteCause?.code === "RESET_REMOTE_DELETE_DENIED"
+            ? "O Supabase encontrou os registros, mas não autorizou apagá-los. O reset não foi concluído e o cache local foi restaurado. Verifique a política RLS de DELETE da tabela study_app_states."
+            : "Não foi possível confirmar a exclusão no Supabase. Os dados locais foram restaurados quando possível; o reset não foi concluído. Verifique a conexão/permissões e tente novamente."
           : step === "local storage cleanup"
             ? "Não foi possível limpar o armazenamento local. O reset não foi concluído."
             : "Não foi possível concluir o reset. Nenhuma mensagem de sucesso foi emitida.";

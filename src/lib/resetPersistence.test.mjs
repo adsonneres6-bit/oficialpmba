@@ -38,19 +38,30 @@ function mockSupabase(rows, { denyDelete = false } = {}) {
     rows,
     from(table) {
       assert.equal(table, "study_app_states");
-      const query = { deleting: false, pattern: "" };
+      const query = {
+        deleting: false,
+        pattern: "",
+        deviceIds: null,
+        returning: false,
+      };
       const builder = {
         delete() {
           query.deleting = true;
           return builder;
         },
         select() {
+          if (query.deleting) query.returning = true;
           return builder;
         },
         like(column, pattern) {
           assert.equal(column, "device_id");
           query.pattern = pattern;
           queriedPatterns.push(pattern);
+          return builder;
+        },
+        in(column, values) {
+          assert.equal(column, "device_id");
+          query.deviceIds = values;
           return builder;
         },
         limit() {
@@ -64,16 +75,25 @@ function mockSupabase(rows, { denyDelete = false } = {}) {
                 .replace(/\\([\\%_])/g, "$1");
               return deviceId.startsWith(literalPrefix);
             };
-            if (query.deleting && !denyDelete) {
-              for (const [deviceId] of rows) {
-                if (matcher(deviceId)) rows.delete(deviceId);
+            if (query.deleting) {
+              if (!denyDelete) {
+                for (const deviceId of query.deviceIds || []) {
+                  rows.delete(deviceId);
+                }
               }
-              resolve({ data: null, error: null });
+              resolve({
+                data:
+                  query.returning && !denyDelete
+                    ? (query.deviceIds || [])
+                        .filter((deviceId) => !rows.has(deviceId))
+                        .map((device_id) => ({ device_id }))
+                    : [],
+                error: null,
+              });
             } else {
               resolve({
                 data: [...rows.keys()]
                   .filter(matcher)
-                  .slice(0, 1)
                   .map((device_id) => ({ device_id })),
                 error: null,
               });
@@ -134,10 +154,13 @@ test("clears all profile exam caches but keeps unrelated application storage", a
     "other",
   );
   assert.deepEqual([...remote.rows.keys()], ["other_user__edital"]);
-  assert.deepEqual(remote.queriedPatterns, [
-    "usuario\\_principal\\_\\_%",
-    "usuario\\_principal\\_\\_%",
-  ]);
+  assert.equal(remote.queriedPatterns.length, 2);
+  assert.equal(
+    remote.queriedPatterns.every(
+      (pattern) => pattern === "usuario\\_principal\\_\\_%",
+    ),
+    true,
+  );
 });
 
 test("waits for queued old writes to finish before deleting remote profile data", async () => {
@@ -210,6 +233,7 @@ test("restores local state and rejects reset when remote deletion is denied", as
       assert.equal(error instanceof ResetPersistenceError, true);
       assert.equal(error.step, "remote storage cleanup");
       assert.equal(error.rollbackError, null);
+      assert.equal(error.cause.code, "RESET_REMOTE_DELETE_DENIED");
       return true;
     },
   );

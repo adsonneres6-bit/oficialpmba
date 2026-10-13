@@ -25,11 +25,29 @@ export async function deleteProfileRowsFromSupabase(
 ) {
   const escapedPrefix = `${profileKey}__`.replace(/[\\%_]/g, "\\$&");
   const pattern = `${escapedPrefix}%`;
-  const { error } = await supabase
+  const { data: matchingRows, error: listError } = await supabase
+    .from(table)
+    .select("device_id")
+    .like("device_id", pattern);
+  if (listError) throw listError;
+  const deviceIds = [
+    ...new Set((matchingRows || []).map((row) => row.device_id).filter(Boolean)),
+  ];
+  if (!deviceIds.length) return;
+
+  const { data: deletedRows, error: deleteError } = await supabase
     .from(table)
     .delete()
-    .like("device_id", pattern);
-  if (error) throw error;
+    .in("device_id", deviceIds)
+    .select("device_id");
+  if (deleteError) throw deleteError;
+  if ((deletedRows || []).length !== deviceIds.length) {
+    const error = new Error(
+      "Supabase did not authorize deleting every profile row. Check the table's DELETE RLS policy and the user's database authorization.",
+    );
+    error.code = "RESET_REMOTE_DELETE_DENIED";
+    throw error;
+  }
 
   const { data, error: verifyError } = await supabase
     .from(table)
@@ -38,7 +56,11 @@ export async function deleteProfileRowsFromSupabase(
     .limit(1);
   if (verifyError) throw verifyError;
   if (data?.length) {
-    throw new Error("Profile rows remain after the deletion request.");
+    const error = new Error(
+      "Profile rows remain after deletion verification. Another client may have recreated a row during reset.",
+    );
+    error.code = "RESET_REMOTE_ROWS_REMAIN";
+    throw error;
   }
 }
 
