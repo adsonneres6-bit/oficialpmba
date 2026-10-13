@@ -8,6 +8,7 @@ import {
   mergeStudyProgress,
   resolveLoadedScheduleSources,
 } from "./lib/manualSchedule.js";
+import { applyExamRoadmapEdit } from "./lib/examRoadmap.js";
 import {
   fetchPublishedBuildId,
   isUpdateAvailable,
@@ -2341,7 +2342,7 @@ async function loadStateFromSupabase() {
 
   return null;
 }
-async function saveStateToSupabase(state) {
+async function saveStateToSupabase(state, { saveProfileIndex = true } = {}) {
   const activeExamKey = state?.activeExamKey || ACTIVE_EXAM_KEY;
   const storageProfileKey =
     state?.storageProfileKey || storageKeyForExam(activeExamKey);
@@ -2358,11 +2359,13 @@ async function saveStateToSupabase(state) {
   };
 
   saveStateToLocalCache(stateToSave);
-  await saveProfileIndexToSupabase(
-    activeExamKey,
-    stateToSave.customExams,
-    stateToSave.deletedBuiltInExamKeys,
-  );
+  if (saveProfileIndex) {
+    await saveProfileIndexToSupabase(
+      activeExamKey,
+      stateToSave.customExams,
+      stateToSave.deletedBuiltInExamKeys,
+    );
+  }
   if (!supabase) return { ok: false, source: "local" };
 
   const deviceId = storageProfileKey;
@@ -3171,6 +3174,9 @@ export default function App() {
     initial.weeklySchedule || [],
   );
   const [roadmap, setRoadmap] = useState(initial.roadmap);
+  const [roadmapArchive, setRoadmapArchive] = useState(
+    initial.roadmapArchive || [],
+  );
   const [customExams, setCustomExams] = useState(
     normalizeCustomExamList(initial.customExams),
   );
@@ -3401,6 +3407,7 @@ export default function App() {
     setSchedule(normalized.schedule);
     setWeeklySchedule(normalized.weeklySchedule || []);
     setRoadmap(normalized.roadmap);
+    setRoadmapArchive(normalized.roadmapArchive || []);
     setErrors(normalized.errors || []);
     setReviews(normalized.reviews || []);
     setNotes(normalized.notes || []);
@@ -3494,6 +3501,7 @@ export default function App() {
       activeExamKey: activeExamKeyState,
       storageProfileKey: storageProfileKeyState,
       customExams,
+      deletedBuiltInExamKeys,
       view,
       currentStudyIsoDate: TODAY,
       currentStudyDayKey,
@@ -3503,6 +3511,7 @@ export default function App() {
       schedule,
       weeklySchedule,
       roadmap,
+      roadmapArchive,
       errors,
       reviews,
       notes,
@@ -3521,6 +3530,7 @@ export default function App() {
     schedule,
     weeklySchedule,
     roadmap,
+    roadmapArchive,
     errors,
     reviews,
     notes,
@@ -3532,6 +3542,7 @@ export default function App() {
     settings,
     scheduleConfig,
     customExams,
+    deletedBuiltInExamKeys,
     activeExamKeyState,
     storageProfileKeyState,
   ]);
@@ -7783,14 +7794,24 @@ export default function App() {
           .map((topic) =>
             typeof topic === "object" && topic !== null
               ? {
-                  text: String(topic.text || "").trim(),
-                  priority: normalizeTopicPriority(topic.priority),
-                }
-              : { text: String(topic || "").trim(), priority: "Média" },
+                id: topic.id,
+                text: String(topic.text || "").trim(),
+                priority: normalizeTopicPriority(topic.priority),
+                difficulty: topic.difficulty,
+                done: topic.done,
+              }
+            : { text: String(topic || "").trim(), priority: "Média" },
           )
           .filter((t) => t.text);
         if (!name || rawTopics.length === 0) return null;
-        const subjectId = slugifyExamKey(name) || `materia_${subjectIndex + 1}`;
+        const subjectId =
+          subject.id ||
+          slugifyExamKey(name) ||
+          `materia_${subjectIndex + 1}`;
+        const reservedTopicIds = new Set(
+          rawTopics.map((topic) => topic.id).filter(Boolean),
+        );
+        const usedTopicIds = new Set();
         return {
           id: subjectId,
           subject: name,
@@ -7801,15 +7822,28 @@ export default function App() {
               : Number(subject.weight || 3) >= 5
                 ? "Média"
                 : "Baixa",
-          status: "Aguardando início",
-          reason: "Matéria cadastrada em Novo Edital / Concurso.",
-          topics: rawTopics.map((topic, topicIndex) => ({
-            id: `${subjectId}_${topicIndex + 1}`,
-            title: topic.text,
-            done: false,
-            priority: normalizeTopicPriority(topic.priority),
-            difficulty: "Média",
-          })),
+          status: subject.status || "Aguardando início",
+          reason:
+            subject.reason || "Matéria cadastrada em Novo Edital / Concurso.",
+          topics: rawTopics.map((topic, topicIndex) => {
+            let id = topic.id || `${subjectId}_${topicIndex + 1}`;
+            let suffix = 1;
+            while (
+              !topic.id &&
+              (reservedTopicIds.has(id) || usedTopicIds.has(id))
+            ) {
+              id = `${subjectId}_novo_${topicIndex + 1}_${suffix}`;
+              suffix += 1;
+            }
+            usedTopicIds.add(id);
+            return {
+              id,
+              title: topic.text,
+              done: Boolean(topic.done),
+              priority: normalizeTopicPriority(topic.priority),
+              difficulty: topic.difficulty || "Média",
+            };
+          }),
         };
       })
       .filter(Boolean);
@@ -7890,9 +7924,11 @@ export default function App() {
 
   function examToForm(exam) {
     const sourceRoadmap =
-      Array.isArray(exam?.roadmap) && exam.roadmap.length
-        ? exam.roadmap
-        : roadmap;
+      exam?.key === activeExamKeyState
+        ? roadmap
+        : Array.isArray(exam?.roadmap) && exam.roadmap.length
+          ? exam.roadmap
+          : roadmap;
     return {
       label: exam?.label || "",
       noExamDate: Boolean(exam?.noExamDate || !exam?.examDate),
@@ -7903,12 +7939,25 @@ export default function App() {
           ? settings.studyStartDate
           : TODAY),
       subjects: sourceRoadmap.map((subject) => ({
+        id: subject.id,
         subject: subject.subject || "",
         weight: String(subject.weight || 3),
+        status: subject.status,
+        reason: subject.reason,
         topics:
           Array.isArray(subject.topics) && subject.topics.length
             ? subject.topics
-                .map((topic) => topic.title || topic)
+                .map((topic) =>
+                  typeof topic === "object"
+                    ? {
+                        id: topic.id,
+                        text: topic.title || "",
+                        priority: topic.priority || "Média",
+                        difficulty: topic.difficulty,
+                        done: topic.done,
+                      }
+                    : topic,
+                )
                 .filter(Boolean)
             : [""],
       })),
@@ -8066,99 +8115,207 @@ export default function App() {
       return setExamCreatorMessage(
         "A data de início dos estudos deve ser hoje ou uma data futura.",
       );
-    const roadmap = buildRoadmapFromExamForm(examForm);
-    if (!roadmap.length)
+    const proposedRoadmap = buildRoadmapFromExamForm(examForm);
+    if (!proposedRoadmap.length)
       return setExamCreatorMessage(
         "Cadastre pelo menos uma matéria com assunto.",
       );
-    const editing = customExams.find((item) => item.key === editingExamKey);
-    const studyStartDate = editing
-      ? editing.studyStartDate ||
-        (editing.key === activeExamKeyState ? settings.studyStartDate : TODAY)
-      : examForm.studyStartDate;
-    const key = editing ? editing.key : slugifyExamKey(label);
-    const versionSuffix = editing ? Number(editing.revision || 1) + 1 : 1;
-    const exam = {
-      key,
-      label,
-      board: "Personalizado",
-      status: "personalizado",
-      revision: versionSuffix,
-      roadmapVersion: `CUSTOM_${key.toUpperCase()}_V${versionSuffix}`,
-      examDate: examForm.noExamDate ? "" : examForm.examDate,
-      noExamDate: examForm.noExamDate,
-      studyStartDate,
-      roadmap,
-    };
-    const nextCustomExams = [
-      ...customExams.filter((item) => item.key !== key),
-      exam,
-    ];
-    setCustomExams(nextCustomExams);
-    setExamCreatorMessage(
-      editing
-        ? "Edital atualizado. Salvando ciclo..."
-        : "Edital criado. Ativando ciclo...",
-    );
-    const nextState = createInitialState(
-      {
-        ...exam,
-        customExams: nextCustomExams,
-        deletedBuiltInExamKeys,
-      },
-      editing
-        ? STUDY_DAYS[0]
-        : studyDayKeyForISODate(studyStartDate),
-    );
-    if (!editing) {
-      nextState.weeklySchedule = withDistributedQuestionTargets(
-        withRecalculatedStudyMinutes(
-          nextState.weeklySchedule,
-          nextState.scheduleConfig,
-          nextState.roadmap,
-        ),
-        nextState.scheduleConfig,
-        nextState.roadmap,
-        { studyStartDate: nextState.settings.studyStartDate },
-      );
-      nextState.schedule = withDistributedQuestionTargets(
-        withRecalculatedStudyMinutes(
-          nextState.schedule,
-          nextState.scheduleConfig,
-          nextState.roadmap,
-        ),
-        nextState.scheduleConfig,
-        nextState.roadmap,
-        { studyStartDate: nextState.settings.studyStartDate },
-      );
-    }
-    nextState.settings = {
-      ...nextState.settings,
-      examDate: exam.examDate || "",
-    };
-    nextState.customExam = true;
-    nextState.customExams = nextCustomExams;
-    nextState.deletedBuiltInExamKeys = deletedBuiltInExamKeys;
-    if (editing && activeExamKeyState !== key) {
-      await saveStateToSupabase({
-        ...nextState,
-        activeExamKey: key,
-        storageProfileKey: storageKeyForExam(key),
-      });
-      const currentState = {
-        ...appState,
-        customExams: nextCustomExams,
-        deletedBuiltInExamKeys,
+
+    try {
+      const editing = customExams.find((item) => item.key === editingExamKey);
+      const studyStartDate = editing
+        ? editing.studyStartDate ||
+          (editing.key === activeExamKeyState ? settings.studyStartDate : TODAY)
+        : examForm.studyStartDate;
+      const key = editing ? editing.key : slugifyExamKey(label);
+      const versionSuffix = editing ? Number(editing.revision || 1) + 1 : 1;
+      let exam = {
+        ...(editing || {}),
+        key,
+        label,
+        board: editing?.board || "Personalizado",
+        status: editing?.status || "personalizado",
+        revision: versionSuffix,
+        roadmapVersion: `CUSTOM_${key.toUpperCase()}_V${versionSuffix}`,
+        examDate: examForm.noExamDate ? "" : examForm.examDate,
+        noExamDate: examForm.noExamDate,
+        studyStartDate,
+        roadmap: proposedRoadmap,
       };
-      setCustomExams(nextCustomExams);
-      await saveStateToSupabase(currentState);
-    } else {
-      applyLoadedState(nextState);
-      await saveStateToSupabase(nextState);
-      setView("dashboard");
+
+      if (!editing) {
+        const nextCustomExams = [...customExams, exam];
+        const nextState = createInitialState(
+          {
+            ...exam,
+            customExams: nextCustomExams,
+            deletedBuiltInExamKeys,
+          },
+          studyDayKeyForISODate(studyStartDate),
+        );
+        nextState.weeklySchedule = withDistributedQuestionTargets(
+          withRecalculatedStudyMinutes(
+            nextState.weeklySchedule,
+            nextState.scheduleConfig,
+            nextState.roadmap,
+          ),
+          nextState.scheduleConfig,
+          nextState.roadmap,
+          { studyStartDate: nextState.settings.studyStartDate },
+        );
+        nextState.schedule = withDistributedQuestionTargets(
+          withRecalculatedStudyMinutes(
+            nextState.schedule,
+            nextState.scheduleConfig,
+            nextState.roadmap,
+          ),
+          nextState.scheduleConfig,
+          nextState.roadmap,
+          { studyStartDate: nextState.settings.studyStartDate },
+        );
+        nextState.settings = {
+          ...nextState.settings,
+          examDate: exam.examDate || "",
+        };
+        nextState.customExam = true;
+        nextState.customExams = nextCustomExams;
+        nextState.deletedBuiltInExamKeys = deletedBuiltInExamKeys;
+
+        const saveResult = await enqueueSerializedStateSave(
+          stateSaveQueueRef,
+          nextState,
+          saveStateToSupabase,
+        );
+        if (supabase && !saveResult.ok) {
+          throw (
+            saveResult.error ||
+            new Error("Não foi possível salvar o novo edital no Supabase.")
+          );
+        }
+        setCustomExams(nextCustomExams);
+        applyLoadedState(nextState);
+        setView("dashboard");
+      } else {
+        const isActiveExam = activeExamKeyState === key;
+        let previousExamState = isActiveExam
+          ? latestAppStateRef.current
+          : null;
+
+        if (!isActiveExam) {
+          const examStorageKey = storageKeyForExam(key);
+          if (supabase) {
+            const { data, error } = await supabase
+              .from(SUPABASE_TABLE)
+              .select("state")
+              .eq("device_id", examStorageKey)
+              .maybeSingle();
+            if (error) throw error;
+            if (data?.state) previousExamState = data.state;
+          }
+          if (!previousExamState && typeof window !== "undefined") {
+            const cached = localStorage.getItem(localCacheKeyForExam(key));
+            if (cached) {
+              try {
+                previousExamState = JSON.parse(cached);
+              } catch (error) {
+                console.error("Cache local inválido do edital:", error);
+                throw new Error(
+                  "Não foi possível ler o estado local do edital.",
+                );
+              }
+            }
+          }
+        }
+
+        let nextCustomExams;
+        let updatedExamState = null;
+        if (previousExamState) {
+          const candidateExams = [
+            ...customExams.filter((item) => item.key !== key),
+            exam,
+          ];
+          updatedExamState = applyExamRoadmapEdit(
+            previousExamState,
+            exam,
+            candidateExams,
+          );
+          exam = { ...exam, roadmap: updatedExamState.roadmap };
+          nextCustomExams = [
+            ...customExams.filter((item) => item.key !== key),
+            exam,
+          ];
+          updatedExamState = {
+            ...updatedExamState,
+            customExams: nextCustomExams,
+            activeExamKey: previousExamState.activeExamKey || key,
+            storageProfileKey:
+              previousExamState.storageProfileKey || storageKeyForExam(key),
+            profileKey: USER_PROFILE_KEY,
+          };
+        } else {
+          nextCustomExams = [
+            ...customExams.filter((item) => item.key !== key),
+            exam,
+          ];
+        }
+
+        const activeStateAfterEdit = isActiveExam
+          ? updatedExamState
+          : {
+              ...latestAppStateRef.current,
+              customExams: nextCustomExams,
+            };
+        if (!activeStateAfterEdit) {
+          throw new Error("O estado do edital ativo não está disponível.");
+        }
+
+        if (updatedExamState && !isActiveExam) {
+          const inactiveSaveResult = await enqueueSerializedStateSave(
+            stateSaveQueueRef,
+            updatedExamState,
+            (state) =>
+              saveStateToSupabase(state, { saveProfileIndex: false }),
+          );
+          if (supabase && !inactiveSaveResult.ok) {
+            throw (
+              inactiveSaveResult.error ||
+              new Error("Não foi possível salvar o edital editado no Supabase.")
+            );
+          }
+        }
+
+        const catalogSaveResult = await enqueueSerializedStateSave(
+          stateSaveQueueRef,
+          activeStateAfterEdit,
+          saveStateToSupabase,
+        );
+        if (supabase && !catalogSaveResult.ok) {
+          throw (
+            catalogSaveResult.error ||
+            new Error("Não foi possível salvar as alterações no Supabase.")
+          );
+        }
+
+        setCustomExams(nextCustomExams);
+        if (isActiveExam) {
+          setRoadmap(updatedExamState.roadmap);
+          setRoadmapArchive(updatedExamState.roadmapArchive || []);
+          setSchedule(updatedExamState.schedule);
+          setWeeklySchedule(updatedExamState.weeklySchedule || []);
+          setSettings(updatedExamState.settings);
+        }
+      }
+
+      setExamCreatorOpen(false);
+      resetExamCreatorForm();
+      setExamCreatorMessage("Edital atualizado sem reiniciar o progresso.");
+      setView("exam-switch");
+    } catch (error) {
+      console.error("Erro ao salvar edição do edital:", error);
+      setExamCreatorMessage(
+        "Não foi possível salvar as alterações. O estado de estudo foi mantido; tente novamente.",
+      );
     }
-    setExamCreatorOpen(false);
-    resetExamCreatorForm();
   }
 
   function normalizePdfLine(line) {
