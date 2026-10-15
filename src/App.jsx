@@ -20,6 +20,19 @@ import {
   isUpdateAvailable,
 } from "./lib/appUpdates.js";
 import {
+  FLASHCARD_STATE_VERSION,
+  SUBJECT_REVIEW_STAGES,
+  flashcardNeedsAttention,
+  flashcardStatus,
+  flashcardTopicActivity,
+  flashcardsForReviewStage,
+  groupFlashcardDashboardActivities,
+  mergeCompletionFlashcards,
+  normalizeFlashcards,
+  resolveReviewFlashcardTarget,
+} from "./lib/flashcards.js";
+import Flashcards from "./components/Flashcards.jsx";
+import {
   AlertTriangle,
   BarChart3,
   BookOpen,
@@ -33,6 +46,7 @@ import {
   FileText,
   Flame,
   Home,
+  Layers,
   Menu,
   NotebookPen,
   Pause,
@@ -2030,6 +2044,8 @@ function createInitialState(
     roadmap,
     errors: [],
     reviews: [],
+    flashcardsVersion: FLASHCARD_STATE_VERSION,
+    flashcards: [],
     notes: [],
     questionSessions: [],
     simulatedTests: [],
@@ -2152,6 +2168,9 @@ function normalizeLoadedState(value) {
     ),
     errors: Array.isArray(loaded.errors) ? loaded.errors : [],
     reviews: Array.isArray(loaded.reviews) ? loaded.reviews : [],
+    flashcardsVersion:
+      Number(loaded.flashcardsVersion) || FLASHCARD_STATE_VERSION,
+    flashcards: normalizeFlashcards(loaded.flashcards),
     notes: Array.isArray(loaded.notes) ? loaded.notes : [],
     questionSessions: Array.isArray(loaded.questionSessions)
       ? loaded.questionSessions
@@ -2763,7 +2782,16 @@ function VersionToast() {
   );
 }
 
-function CompletionModal({ block, form, setForm, onClose, onConfirm }) {
+function CompletionModal({
+  block,
+  form,
+  setForm,
+  onClose,
+  onConfirm,
+  topicOptions = [],
+  saving = false,
+  saveError = "",
+}) {
   const total = Math.max(0, Number(form.totalQuestions) || 0);
   const correct = Math.max(
     0,
@@ -2866,7 +2894,7 @@ function CompletionModal({ block, form, setForm, onClose, onConfirm }) {
           initial={{ scale: 0.96, y: 12 }}
           animate={{ scale: 1, y: 0 }}
           exit={{ scale: 0.96, y: 12 }}
-          className="w-full max-w-3xl rounded-3xl bg-white p-6 shadow-2xl"
+          className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl"
         >
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -2994,9 +3022,161 @@ function CompletionModal({ block, form, setForm, onClose, onConfirm }) {
               />
             </div>
           </div>
+          {block.subjectId && block.subjectId !== "questoes" && (
+            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="font-black text-amber-950">
+                    Criar flashcards para este assunto
+                  </h4>
+                  <p className="text-xs font-semibold text-amber-900">
+                    Os cartões serão salvos como novos; criá-los não conclui a revisão.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={saving || !topicOptions.length}
+                  onClick={() =>
+                    setForm((current) => ({
+                      ...current,
+                      flashcardError: "",
+                      flashcardDrafts: [
+                        ...(current.flashcardDrafts || []),
+                        {
+                          id: `flashcard_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+                          topicId:
+                            block.topicId ||
+                            (block.topicIds?.length === 1
+                              ? block.topicIds[0]
+                              : topicOptions.length === 1
+                                ? topicOptions[0].id
+                                : ""),
+                          front: "",
+                          back: "",
+                        },
+                      ],
+                    }))
+                  }
+                  className="rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-950 disabled:opacity-50"
+                >
+                  Adicionar cartão
+                </button>
+              </div>
+              {!topicOptions.length && (
+                <p className="mt-3 text-xs font-semibold text-red-800">
+                  Não há assunto vinculado disponível neste bloco; os cartões não podem ser associados com segurança.
+                </p>
+              )}
+              <div className="mt-3 space-y-3">
+                {(form.flashcardDrafts || []).map((draft, index) => (
+                  <div
+                    key={draft.id}
+                    className="rounded-xl border border-amber-200 bg-white p-3"
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <b className="text-xs text-stone-700">
+                        Cartão novo {index + 1}
+                      </b>
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() =>
+                          setForm((current) => ({
+                            ...current,
+                            flashcardError: "",
+                            flashcardDrafts: current.flashcardDrafts.filter(
+                              (item) => item.id !== draft.id,
+                            ),
+                          }))
+                        }
+                        className="rounded-lg border border-stone-200 px-2 py-1 text-xs font-bold text-stone-600"
+                        aria-label={`Remover cartão novo ${index + 1}`}
+                      >
+                        Remover
+                      </button>
+                    </div>
+                    {topicOptions.length > 1 && (
+                      <label className="mb-2 block text-xs font-semibold text-stone-600">
+                        Assunto
+                        <select
+                          value={draft.topicId}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              flashcardError: "",
+                              flashcardDrafts: current.flashcardDrafts.map(
+                                (item) =>
+                                  item.id === draft.id
+                                    ? { ...item, topicId: event.target.value }
+                                    : item,
+                              ),
+                            }))
+                          }
+                          className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm"
+                        >
+                          <option value="">Selecione o assunto</option>
+                          {topicOptions.map((topic) => (
+                            <option key={topic.id} value={topic.id}>
+                              {topic.title}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    <label className="block text-xs font-semibold text-stone-600">
+                      Frente
+                      <textarea
+                        value={draft.front}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            flashcardError: "",
+                            flashcardDrafts: current.flashcardDrafts.map(
+                              (item) =>
+                                item.id === draft.id
+                                  ? { ...item, front: event.target.value }
+                                  : item,
+                            ),
+                          }))
+                        }
+                        className="mt-1 h-20 w-full rounded-lg border border-stone-200 px-3 py-2 text-sm"
+                        placeholder="Digite a pergunta ou conceito"
+                      />
+                    </label>
+                    <label className="mt-2 block text-xs font-semibold text-stone-600">
+                      Verso
+                      <textarea
+                        value={draft.back}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            flashcardError: "",
+                            flashcardDrafts: current.flashcardDrafts.map(
+                              (item) =>
+                                item.id === draft.id
+                                  ? { ...item, back: event.target.value }
+                                  : item,
+                            ),
+                          }))
+                        }
+                        className="mt-1 h-20 w-full rounded-lg border border-stone-200 px-3 py-2 text-sm"
+                        placeholder="Digite a resposta ou explicação"
+                      />
+                    </label>
+                  </div>
+                ))}
+              </div>
+              {form.flashcardError && (
+                <p role="alert" className="mt-2 text-sm font-bold text-red-800">
+                  {form.flashcardError}
+                </p>
+              )}
+            </div>
+          )}
           <div className="mt-6 flex flex-wrap justify-end gap-2">
             <button
               onClick={onClose}
+              disabled={saving}
               className="rounded-2xl border border-stone-200 bg-white px-4 py-3 font-semibold text-stone-700"
             >
               Cancelar
@@ -3011,11 +3191,18 @@ function CompletionModal({ block, form, setForm, onClose, onConfirm }) {
                   onConfirm();
                 }
               }}
-              className="rounded-2xl bg-emerald-700 px-5 py-3 font-semibold text-white"
+              disabled={saving}
+              className="rounded-2xl bg-emerald-700 px-5 py-3 font-semibold text-white disabled:opacity-60"
             >
-              <CheckCircle2 size={16} className="inline" /> Salvar e concluir
+              <CheckCircle2 size={16} className="inline" />{" "}
+              {saving ? "Salvando..." : "Salvar e concluir"}
             </button>
           </div>
+          {saveError && (
+            <p role="alert" className="mt-3 text-right text-sm font-bold text-red-800">
+              {saveError}
+            </p>
+          )}
         </motion.div>
       </motion.div>
     </AnimatePresence>
@@ -3178,6 +3365,10 @@ export default function App() {
   );
   const [errors, setErrors] = useState(initial.errors || []);
   const [reviews, setReviews] = useState(initial.reviews || []);
+  const [flashcards, setFlashcards] = useState(
+    normalizeFlashcards(initial.flashcards),
+  );
+  const [flashcardStudyTarget, setFlashcardStudyTarget] = useState(null);
   const [notes, setNotes] = useState(initial.notes || []);
   const [viewingNote, setViewingNote] = useState(null);
   const noteTextAreaRef = useRef(null);
@@ -3332,6 +3523,9 @@ export default function App() {
   const [pdfImportMessage, setPdfImportMessage] = useState("");
   const [pdfPreviewReady, setPdfPreviewReady] = useState(false);
   const [completionBlock, setCompletionBlock] = useState(null);
+  const [completionSaving, setCompletionSaving] = useState(false);
+  const [completionSaveError, setCompletionSaveError] = useState("");
+  const completionSaveLockRef = useRef(false);
   const [completionForm, setCompletionForm] = useState({
     notes: "",
     totalQuestions: "",
@@ -3340,6 +3534,8 @@ export default function App() {
     fixText: "",
     missingReason: "",
     showReasonStep: false,
+    flashcardDrafts: [],
+    flashcardError: "",
   });
   const [questionsExcusedToday, setQuestionsExcusedToday] = useState(0);
   const [motivationOpen, setMotivationOpen] = useState(true);
@@ -3398,6 +3594,8 @@ export default function App() {
     setRoadmapArchive(normalized.roadmapArchive || []);
     setErrors(normalized.errors || []);
     setReviews(normalized.reviews || []);
+    setFlashcards(normalizeFlashcards(normalized.flashcards));
+    setFlashcardStudyTarget(null);
     setNotes(normalized.notes || []);
     setQuestionSessions(normalized.questionSessions || []);
     setSimulatedTests(normalized.simulatedTests || []);
@@ -3426,6 +3624,38 @@ export default function App() {
       return Promise.resolve({ ok: false, source: "reset" });
     }
     return enqueueSerializedStateSave(stateSaveQueueRef, state, save);
+  }
+
+  async function commitFlashcardCards(nextCards) {
+    if (persistenceTimeoutRef.current) {
+      clearTimeout(persistenceTimeoutRef.current);
+      persistenceTimeoutRef.current = null;
+    }
+    try {
+      const result = await enqueueAppStateSave({
+        ...latestAppStateRef.current,
+        flashcards: nextCards,
+      });
+      if (!result.ok && result.source !== "local") {
+        setCloudStatus(
+          "Falha ao salvar a revisão de flashcards no Supabase; tente novamente.",
+        );
+        return { ok: false, error: result.error };
+      }
+      setFlashcards(nextCards);
+      setCloudStatus(
+        result.ok
+          ? `Revisão de flashcards salva no Supabase às ${new Date().toLocaleTimeString("pt-BR")}`
+          : "Supabase não configurado; revisão de flashcards salva no cache local.",
+      );
+      return { ok: true, source: result.source };
+    } catch (error) {
+      console.error("Erro ao persistir revisão de flashcards:", error);
+      setCloudStatus(
+        "Falha ao salvar a revisão de flashcards; tente novamente.",
+      );
+      return { ok: false, error };
+    }
   }
 
   function openConfirmDialog({
@@ -3510,6 +3740,8 @@ export default function App() {
       roadmapArchive,
       errors,
       reviews,
+      flashcardsVersion: FLASHCARD_STATE_VERSION,
+      flashcards,
       notes,
       questionSessions,
       simulatedTests,
@@ -3529,6 +3761,7 @@ export default function App() {
     roadmapArchive,
     errors,
     reviews,
+    flashcards,
     notes,
     questionSessions,
     simulatedTests,
@@ -4548,6 +4781,31 @@ export default function App() {
         )[0] || null,
     [sortedReviews],
   );
+  const dashboardReviewActivityGroups = useMemo(() => {
+    const todayDate = parseISODate(TODAY);
+    const traditionalReviews = sortedReviews
+      .map((review) => {
+        const date = parseBRDate(review.date);
+        if (!date || date > todayDate) return null;
+        return {
+          review,
+          status: date < todayDate ? "overdue" : "due",
+        };
+      })
+      .filter(Boolean);
+    return groupFlashcardDashboardActivities({
+      traditionalReviews,
+      cards: flashcards,
+      roadmap,
+      examId: activeExamKeyState,
+      today: TODAY,
+    });
+  }, [
+    activeExamKeyState,
+    flashcards,
+    roadmap,
+    sortedReviews,
+  ]);
   const weekDaysForSelectedWeek = useMemo(
     () =>
       effectiveWeeklySchedule.filter(
@@ -5200,6 +5458,7 @@ export default function App() {
     ["questions", CheckSquare, "Questões"],
     ["simulated", Trophy, "Simulado"],
     ["reviews", RotateCcw, "Revisões"],
+    ["flashcards", Layers, "Flashcards"],
     ["errors", AlertTriangle, "Erros"],
     ["notes", NotebookPen, "Anotações"],
     ["weights", BarChart3, "Pesos"],
@@ -5771,17 +6030,11 @@ export default function App() {
     const subject = subjectMap[subjectId];
     if (!subject || !topicTitle) return;
     const title = `${subject.name}: ${topicTitle}`;
-    const plans = [
-      { type: "24 horas", days: 1 },
-      { type: "7 dias", days: 7 },
-      { type: "15 dias", days: 15 },
-      { type: "30 dias", days: 30 },
-    ];
     setReviews((current) => {
       const existing = new Set(
         current.map((review) => `${review.title}-${review.type}`),
       );
-      const next = plans
+      const next = SUBJECT_REVIEW_STAGES
         .filter((plan) => !existing.has(`${title}-${plan.type}`))
         .map((plan) => ({
           id: uid("review"),
@@ -5789,9 +6042,42 @@ export default function App() {
           date: addDaysISO(TODAY, plan.days),
           type: plan.type,
           status: "pendente",
+          subjectId,
+          topicId:
+            subject.topics?.find((topic) => topic.title === topicTitle)?.id ||
+            "",
         }));
       return [...current, ...next];
     });
+  }
+
+  function flashcardsForReview(review) {
+    return flashcardsForReviewStage(flashcards, review, {
+      examId: review.examId || activeExamKeyState,
+      today: TODAY,
+    });
+  }
+
+  function startFlashcardsForReview(review) {
+    const target = resolveReviewFlashcardTarget(review, roadmap);
+    if (!target) return;
+    startFlashcardsForTarget({
+      ...target,
+      examId: review.examId || activeExamKeyState,
+      reviewId: review.id,
+      reviewType: review.type,
+      reviewDate: review.date,
+    });
+  }
+
+  function startFlashcardsForTarget(target) {
+    setFlashcardStudyTarget({ ...target, requestId: uid("flashcard_review") });
+    setView("flashcards");
+  }
+
+  function openTraditionalReview(review) {
+    startReview(review.id);
+    setView("reviews");
   }
 
   function startReview(id) {
@@ -6652,11 +6938,62 @@ export default function App() {
       fixText: "",
       missingReason: "",
       showReasonStep: false,
+      flashcardDrafts: [],
+      flashcardError: "",
     });
+    setCompletionSaveError("");
   }
 
-  function confirmCompletion() {
-    if (!completionBlock) return;
+  async function confirmCompletion() {
+    if (!completionBlock || completionSaveLockRef.current) return;
+    const drafts = completionForm.flashcardDrafts || [];
+    const subjectTopics =
+      roadmap.find((subject) => subject.id === completionBlock.subjectId)
+        ?.topics || [];
+    const associatedTopicIds = [
+      ...(completionBlock.topicIds || []),
+      ...(completionBlock.topicId ? [completionBlock.topicId] : []),
+    ];
+    const topicOptions = subjectTopics.filter(
+      (topic) =>
+        !associatedTopicIds.length || associatedTopicIds.includes(topic.id),
+    );
+    const invalidDraft = drafts.find(
+      (draft) =>
+        !String(draft.front || "").trim() ||
+        !String(draft.back || "").trim() ||
+        !topicOptions.some((topic) => topic.id === draft.topicId),
+    );
+    if (invalidDraft) {
+      setCompletionForm((current) => ({
+        ...current,
+        flashcardError:
+          "Preencha frente, verso e selecione um assunto válido para cada cartão.",
+      }));
+      return;
+    }
+    completionSaveLockRef.current = true;
+    setCompletionSaving(true);
+    setCompletionSaveError("");
+    try {
+      if (drafts.length) {
+        const subject = roadmap.find(
+          (item) => item.id === completionBlock.subjectId,
+        );
+        const nextCards = mergeCompletionFlashcards(flashcards, drafts, {
+          examId: activeExamKeyState,
+          subjectId: completionBlock.subjectId,
+          subjectLabel: subject?.subject || completionBlock.subject || "",
+          topicOptions,
+          sourceBlockId: completionBlock.id,
+        });
+        const cardSave = await commitFlashcardCards(nextCards);
+        if (!cardSave.ok) {
+          throw new Error(
+            "Os flashcards não foram confirmados no armazenamento. O estudo não foi concluído; tente novamente.",
+          );
+        }
+      }
     const total = Math.max(0, Number(completionForm.totalQuestions) || 0);
     const correct = Math.max(
       0,
@@ -6862,12 +7199,41 @@ export default function App() {
         setQuestionsExcusedToday((c) => c + excused);
       }
     }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (persistenceTimeoutRef.current) {
+      clearTimeout(persistenceTimeoutRef.current);
+      persistenceTimeoutRef.current = null;
+    }
+    const saveResult = await enqueueAppStateSave(latestAppStateRef.current);
+    if (!saveResult.ok && saveResult.source !== "local") {
+      throw new Error(
+        "O estudo e os flashcards foram mantidos no cache local, mas a confirmação no Supabase falhou. Tente salvar novamente.",
+      );
+    }
+    setCloudStatus(
+      saveResult.ok
+        ? `Estudo e flashcards salvos no Supabase às ${new Date().toLocaleTimeString("pt-BR")}`
+        : "Supabase não configurado; estudo e flashcards salvos somente no cache local.",
+    );
     setCompletionBlock(null);
     setCelebration({
       id: uid("celebration"),
       subject: completionBlock.subject,
       topic: completionBlock.topic,
     });
+    } catch (error) {
+      setCloudStatus(
+        "Falha ao confirmar a conclusão no Supabase; os dados locais foram preservados.",
+      );
+      setCompletionSaveError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível salvar e concluir. Os dados permanecem para nova tentativa.",
+      );
+    } finally {
+      completionSaveLockRef.current = false;
+      setCompletionSaving(false);
+    }
   }
 
   function resetBlock(id) {
@@ -8893,6 +9259,8 @@ export default function App() {
       deletedBuiltInExamKeys,
       errors,
       reviews,
+      flashcardsVersion: FLASHCARD_STATE_VERSION,
+      flashcards,
       notes,
       questionSessions,
       simulatedTests,
@@ -8937,6 +9305,7 @@ export default function App() {
           : 0,
         errors: Array.isArray(errors) ? errors.length : 0,
         reviews: Array.isArray(reviews) ? reviews.length : 0,
+        flashcards: Array.isArray(flashcards) ? flashcards.length : 0,
         notes: Array.isArray(notes) ? notes.length : 0,
         simulatedTests: Array.isArray(simulatedTests)
           ? simulatedTests.length
@@ -9056,6 +9425,8 @@ export default function App() {
         );
         setErrors(Array.isArray(data.errors) ? data.errors : []);
         setReviews(Array.isArray(data.reviews) ? data.reviews : []);
+        setFlashcards(normalizeFlashcards(data.flashcards));
+        setFlashcardStudyTarget(null);
         setNotes(Array.isArray(data.notes) ? data.notes : []);
         setQuestionSessions(
           Array.isArray(data.questionSessions) ? data.questionSessions : [],
@@ -9156,8 +9527,27 @@ export default function App() {
           block={completionBlock}
           form={completionForm}
           setForm={setCompletionForm}
-          onClose={() => setCompletionBlock(null)}
+          onClose={() => {
+            if (completionSaving) return;
+            setCompletionBlock(null);
+            setCompletionSaveError("");
+          }}
           onConfirm={confirmCompletion}
+          topicOptions={
+            (roadmap.find((subject) => subject.id === completionBlock.subjectId)
+              ?.topics || []).filter((topic) => {
+              const associatedTopicIds = [
+                ...(completionBlock.topicIds || []),
+                ...(completionBlock.topicId ? [completionBlock.topicId] : []),
+              ];
+              return (
+                !associatedTopicIds.length ||
+                associatedTopicIds.includes(topic.id)
+              );
+            })
+          }
+          saving={completionSaving}
+          saveError={completionSaveError}
         />
       )}
       <AnimatePresence>
@@ -9772,56 +10162,89 @@ export default function App() {
                             do estudo normal do dia.
                           </div>
                         )}
-                        {overdueReviews.length > 0 && (
-                          <div className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-                            <b>Revisões vencidas:</b>
-                            <div className="mt-3 space-y-2">
-                              {overdueReviews.slice(0, 4).map((review) => (
-                                <div
-                                  key={review.id}
-                                  className="rounded-2xl bg-white/70 px-3 py-2"
-                                >
-                                  <p className="font-black">{review.title}</p>
-                                  <p className="text-xs font-semibold">
-                                    {review.type} • {review.date}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                            {overdueReviews.length > 4 && (
-                              <p className="mt-2 text-xs font-bold">
-                                +{overdueReviews.length - 4} revisão(ões)
-                                vencida(s)
-                              </p>
-                            )}
-                          </div>
-                        )}
-                        {todayReviews.length > 0 && (
-                          <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                        {dashboardReviewActivityGroups.length > 0 && (
+                          <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
                             <div className="flex flex-wrap items-center justify-between gap-2">
-                              <b>Revisões de hoje</b>
+                              <b>Revisões pendentes por assunto</b>
                               <Badge tone="amber">
-                                {todayReviews.length} hoje
+                                {dashboardReviewActivityGroups.length} assunto(s)
                               </Badge>
                             </div>
-                            <div className="mt-3 space-y-2">
-                              {todayReviews.slice(0, 5).map((review) => (
+                            <div className="mt-3 space-y-3">
+                              {dashboardReviewActivityGroups.map((group) => (
                                 <div
-                                  key={review.id}
-                                  className="rounded-2xl bg-white/80 px-3 py-2"
+                                  key={group.key}
+                                  className="rounded-2xl bg-white/90 p-3"
                                 >
-                                  <p className="font-black">{review.title}</p>
-                                  <p className="text-xs font-semibold">
-                                    {review.type} • {review.date}
-                                  </p>
+                                  <p className="font-black">{group.subject}</p>
+                                  {group.topic && (
+                                    <p className="text-xs font-semibold text-stone-600">
+                                      {group.topic}
+                                    </p>
+                                  )}
+                                  {group.traditional.map((review) => (
+                                    <div
+                                      key={`traditional-${review.id}`}
+                                      className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-stone-100 pt-2"
+                                    >
+                                      <span className="text-xs font-semibold">
+                                        Revisão tradicional • {review.type} •{" "}
+                                        {reviewStatus(review) === "vencida"
+                                          ? "atrasada"
+                                          : "hoje"}
+                                      </span>
+                                      <div className="flex gap-2">
+                                        <button
+                                          onClick={() =>
+                                            openTraditionalReview(review)
+                                          }
+                                          className="rounded-lg border border-stone-300 px-2.5 py-1.5 text-xs font-bold"
+                                        >
+                                          Abrir revisão
+                                        </button>
+                                        <button
+                                          onClick={() => completeReview(review.id)}
+                                          className="rounded-lg bg-emerald-700 px-2.5 py-1.5 text-xs font-bold text-white"
+                                        >
+                                          Concluir
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                  {group.flashcardStages.map((stage) => {
+                                    const newCount = stage.cards.filter(
+                                      (card) => flashcardStatus(card, TODAY) === "new",
+                                    ).length;
+                                    const attentionCount = stage.cards.filter(
+                                      flashcardNeedsAttention,
+                                    ).length;
+                                    const review = sortedReviews.find(
+                                      (item) => item.id === stage.reviewId,
+                                    );
+                                    return (
+                                      <div
+                                        key={`flashcards-${stage.reviewId}`}
+                                        className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-stone-100 pt-2"
+                                      >
+                                        <span className="text-xs font-semibold">
+                                          Flashcards • etapa {stage.reviewType} •{" "}
+                                          {stage.activityStatus === "overdue" ? "atrasada" : "hoje"} •{" "}
+                                          {stage.cards.length} disponível(is)
+                                          {newCount ? ` • ${newCount} novo(s)` : ""}
+                                          {attentionCount ? ` • ${attentionCount} para reforço` : ""}
+                                        </span>
+                                        <button
+                                          onClick={() => review && startFlashcardsForReview(review)}
+                                          className="rounded-lg bg-amber-800 px-2.5 py-1.5 text-xs font-bold text-white"
+                                        >
+                                          Estudar etapa
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               ))}
                             </div>
-                            {todayReviews.length > 5 && (
-                              <p className="mt-2 text-xs font-bold">
-                                +{todayReviews.length - 5} revisão(ões) de hoje
-                              </p>
-                            )}
                           </div>
                         )}
                         {completedTodayReviews.length > 0 && (
@@ -9838,8 +10261,7 @@ export default function App() {
                             </p>
                           </div>
                         )}
-                        {overdueReviews.length === 0 &&
-                          todayReviews.length === 0 &&
+                        {dashboardReviewActivityGroups.length === 0 &&
                           nextPendingReview && (
                             <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -9856,8 +10278,7 @@ export default function App() {
                               </div>
                             </div>
                           )}
-                        {overdueReviews.length === 0 &&
-                          todayReviews.length === 0 &&
+                        {dashboardReviewActivityGroups.length === 0 &&
                           !nextPendingReview && (
                             <div className="rounded-3xl border border-stone-200 bg-stone-50 p-4 text-sm text-stone-700">
                               <b>Sistema zerado:</b> comece pelo primeiro bloco
@@ -12488,6 +12909,45 @@ export default function App() {
                     const isOverdue = status === "vencida";
                     const isDone = status === "concluida";
                     const isRunning = status === "andamento";
+                    const reviewFlashcards = flashcardsForReview(review);
+                    const reviewTarget = resolveReviewFlashcardTarget(
+                      review,
+                      roadmap,
+                    );
+                    const topicFlashcards = reviewTarget
+                      ? flashcards.filter(
+                          (card) =>
+                            !card.archived &&
+                            (!card.examKey ||
+                              card.examKey === activeExamKeyState) &&
+                            card.subjectId === reviewTarget.subjectId &&
+                            card.topicId === reviewTarget.topicId,
+                        )
+                      : [];
+                    const flashcardActivity = reviewTarget
+                      ? flashcardTopicActivity(topicFlashcards, reviewTarget)
+                      : null;
+                    const newFlashcards = topicFlashcards.filter(
+                      (card) => flashcardStatus(card, TODAY) === "new",
+                    ).length;
+                    const attentionFlashcards = reviewFlashcards.filter(
+                      flashcardNeedsAttention,
+                    ).length;
+                    const nextTopicReview = sortedReviews
+                      .filter((candidate) => {
+                        const candidateDate = parseBRDate(candidate.date);
+                        return (
+                          candidateDate &&
+                          candidateDate > parseISODate(TODAY) &&
+                          candidate.subjectId === review.subjectId &&
+                          candidate.topicId === review.topicId
+                        );
+                      })
+                      .sort(
+                        (left, right) =>
+                          (parseBRDate(left.date)?.getTime() || 0) -
+                          (parseBRDate(right.date)?.getTime() || 0),
+                      )[0];
                     return (
                       <Card
                         key={review.id}
@@ -12529,8 +12989,67 @@ export default function App() {
                             <p className="text-sm text-stone-600">
                               Data: {review.date}
                             </p>
+                            <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+                              <p className="font-black">
+                                Etapa do assunto: {review.type}
+                              </p>
+                              <p className="mt-1">
+                                Próxima revisão do assunto:{" "}
+                                {nextTopicReview?.date || "não há outra etapa cadastrada"}.
+                                A data acima ({review.date}) é a data global desta etapa.
+                              </p>
+                              <p className="mt-2">
+                                Atividade tradicional:{" "}
+                                {isDone ? "concluída" : isRunning ? "em andamento" : "pendente"}.
+                              </p>
+                              <p>
+                                Flashcards: {topicFlashcards.length} cadastrado(s) •{" "}
+                                {reviewFlashcards.length
+                                  ? `${reviewFlashcards.length} disponível(is) nesta etapa`
+                                  : topicFlashcards.length
+                                    ? "etapa concluída para os cartões cadastrados"
+                                    : "nenhum cartão cadastrado"}.
+                              </p>
+                              {topicFlashcards.length > 0 && (
+                                <p className="mt-1">
+                                  {newFlashcards} novo(s), ainda não revisado(s) •{" "}
+                                  {attentionFlashcards} para reforço pela dificuldade/histórico.
+                                </p>
+                              )}
+                            </div>
+                            {flashcardActivity?.totalCards > 0 && (
+                              <details className="mt-2 rounded-xl border border-stone-200 bg-white p-3 text-sm text-stone-700">
+                                <summary className="cursor-pointer font-bold">
+                                  Histórico de desempenho dos flashcards
+                                </summary>
+                                <p className="mt-2">
+                                  Última sessão:{" "}
+                                  {flashcardActivity.reviewed
+                                    ? new Date(flashcardActivity.lastReviewedAt).toLocaleString("pt-BR")
+                                    : "nenhuma sessão efetiva registrada"}.
+                                </p>
+                                <p>
+                                  {flashcardActivity.cardsReviewed} cartão(ões)
+                                  na sessão mais recente •{" "}
+                                  {flashcardActivity.correctFirstTry} acerto(s)
+                                  na 1ª tentativa •{" "}
+                                  {flashcardActivity.correctSecondTry} na 2ª •{" "}
+                                  {flashcardActivity.incorrect} incorreto(s) •{" "}
+                                  {flashcardActivity.consulted} consulta(s).
+                                </p>
+                              </details>
+                            )}
                           </div>
                           <div className="flex flex-wrap gap-2">
+                            {reviewFlashcards.length > 0 && (
+                              <button
+                                onClick={() => startFlashcardsForReview(review)}
+                                className="rounded-2xl bg-amber-800 px-4 py-3 text-sm font-semibold text-white"
+                              >
+                                <Layers size={15} className="inline" /> Estudar etapa{" "}
+                                {review.type} ({reviewFlashcards.length})
+                              </button>
+                            )}
                             {!isDone && !isRunning && (
                               <button
                                 onClick={() => startReview(review.id)}
@@ -12563,6 +13082,24 @@ export default function App() {
                   })
                 )}
               </div>
+            </motion.section>
+          )}
+          {view === "flashcards" && (
+            <motion.section
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-6"
+            >
+              <Flashcards
+                cards={flashcards}
+                onCardsChange={setFlashcards}
+                onCommitCards={commitFlashcardCards}
+                roadmap={roadmap}
+                activeExamKey={activeExamKeyState}
+                reviewStages={reviews}
+                studyTarget={flashcardStudyTarget}
+                onStudyTargetConsumed={() => setFlashcardStudyTarget(null)}
+              />
             </motion.section>
           )}
           {view === "errors" && (
