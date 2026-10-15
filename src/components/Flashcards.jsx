@@ -125,6 +125,7 @@ export default function Flashcards({
   const [savingReview, setSavingReview] = useState(false);
   const [confirmArchiveId, setConfirmArchiveId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [studyMessage, setStudyMessage] = useState("");
   const correctedAnswersRef = useRef({});
   const ratedCardsRef = useRef(new Set());
   const correctionLockRef = useRef(false);
@@ -176,7 +177,12 @@ export default function Flashcards({
           includeNew: Boolean(studyTarget.includeNew),
           statuses: studyTarget.statuses || null,
         });
-    if (dueCards.length) beginSession(dueCards, studyTarget);
+    if (dueCards.length) {
+      beginSession(dueCards, studyTarget);
+      setStudyMessage("");
+    } else {
+      setStudyMessage("Não há flashcards disponíveis para esta matéria, assunto e etapa de revisão.");
+    }
     onStudyTargetConsumed?.();
     // A review action is a one-shot request, not a live session dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -250,6 +256,10 @@ export default function Flashcards({
     today,
     topicFilter,
   ]);
+  const filteredNewCards = useMemo(
+    () => filteredCards.filter((card) => flashcardStatus(card, today) === "new"),
+    [filteredCards, today],
+  );
 
   const sessionCard = session
     ? activeCards.find((card) => card.id === session.cardIds[session.index])
@@ -260,7 +270,11 @@ export default function Flashcards({
 
   function beginSession(sessionCards, target = null) {
     const queue = [...new Map(sessionCards.map((card) => [card.id, card])).values()];
-    if (!queue.length) return;
+    if (!queue.length) {
+      setStudyMessage("Nenhum cartão atende aos filtros e à modalidade selecionada.");
+      return;
+    }
+    setStudyMessage("");
     setSession({
       id: `flashcard_session_${Date.now()}_${Math.random().toString(16).slice(2)}`,
       cardIds: queue.map((card) => card.id),
@@ -516,13 +530,11 @@ export default function Flashcards({
           consulted,
         },
       ];
-      const isLast = session.index >= session.cardIds.length - 1;
       setSession({
         ...session,
         outcomes: nextOutcomes,
-        index: isLast || stayOnCard ? session.index : session.index + 1,
-        finished: isLast && !stayOnCard,
-        finishedAt: isLast && !stayOnCard ? now.toISOString() : null,
+        finished: false,
+        finishedAt: null,
       });
       setAnswerVisible(stayOnCard);
       setShowOfficial(stayOnCard);
@@ -583,7 +595,7 @@ export default function Flashcards({
           reviewStageType: session.reviewType,
           now: new Date(),
           rating: "again",
-          outcome: "incorrect",
+          outcome: result.status === "incomplete" ? "incomplete" : "incorrect",
         });
         const nextCards = activeCards.map((card) =>
           card.id === sessionCard.id ? completedCard : card,
@@ -610,7 +622,7 @@ export default function Flashcards({
           {
             cardId: sessionCard.id,
             rating: "again",
-            outcome: "incorrect",
+            outcome: result.status === "incomplete" ? "incomplete" : "incorrect",
             attempts: 2,
             consulted: false,
           },
@@ -702,6 +714,8 @@ export default function Flashcards({
   }
 
   function finishSession() {
+    const hasProgress = Boolean(session?.outcomes?.length || Object.values(sessionAttempts).some((attempts) => attempts.length) || Object.values(sessionAnswers).some((answer) => String(answer).trim()));
+    if (hasProgress && !window.confirm("Sair da sessão? Os resultados já gravados serão preservados.")) return;
     setSession(null);
     setSessionAnswers({});
     setSessionCorrections({});
@@ -727,6 +741,9 @@ export default function Flashcards({
       ).length,
       incorrect: session.outcomes.filter(
         (outcome) => outcome.outcome === "incorrect",
+      ).length,
+      incomplete: session.outcomes.filter(
+        (outcome) => outcome.outcome === "incomplete",
       ).length,
       consulted: session.outcomes.filter((outcome) => outcome.consulted).length,
     };
@@ -778,6 +795,7 @@ export default function Flashcards({
           <Metric label="Acerto na 1ª" value={attemptTally.firstTryCorrect} detail="Recuperação imediata" tone="green" />
           <Metric label="Acerto na 2ª" value={attemptTally.secondTryCorrect} detail="Após nova tentativa" tone="amber" />
           <Metric label="Incorretos" value={attemptTally.incorrect} detail="Duas tentativas" tone="red" />
+          <Metric label="Incompletos" value={attemptTally.incomplete} detail="Respostas parciais" tone="amber" />
           <Metric label="Consultas" value={attemptTally.consulted} detail="Sem acerto presumido" tone="amber" />
           {FLASHCARD_RATINGS.map((rating) => (
             <Metric
@@ -1814,21 +1832,15 @@ export default function Flashcards({
         )}
 
         <div className="flex flex-wrap items-center gap-3">
-          {summary.new > 0 && (
+          {studyMessage && (
+            <p role="status" className="w-full rounded-xl bg-amber-50 p-3 text-sm font-semibold text-amber-950">{studyMessage}</p>
+          )}
+          {filteredNewCards.length > 0 && (
             <button
-              onClick={() =>
-                beginSession(
-                  pendingFlashcardsForTarget(
-                    activeCards,
-                    {},
-                    today,
-                    { includeNew: true },
-                  ),
-                )
-              }
+              onClick={() => beginSession(filteredNewCards)}
               className="inline-flex items-center gap-2 rounded-2xl bg-amber-800 px-5 py-3 font-bold text-white"
             >
-              <RotateCcw size={17} /> Estudar cartões novos ({summary.new})
+              <RotateCcw size={17} /> Estudar cartões novos ({filteredNewCards.length})
             </button>
           )}
           {confirmArchiveId && (
