@@ -1081,6 +1081,30 @@ function hydrateSchedule(schedule, roadmap) {
   });
 }
 
+function scheduleExamIndicator(item, roadmap) {
+  const topicIds = Array.isArray(item.topicIds) && item.topicIds.length
+    ? item.topicIds
+    : item.topicId ? [item.topicId] : [];
+  const topics = topicIds
+    .map((topicId) => getTopic(roadmap, item.subjectId, topicId))
+    .filter(Boolean);
+  const competitions = new Set();
+  topics.forEach((topic) => {
+    (topic.examLabels || []).forEach((label) => {
+      const normalized = String(label || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLocaleUpperCase("pt-BR");
+      if (/\bPMAL\b|POLICIA MILITAR DE ALAGOAS/.test(normalized)) competitions.add("AL");
+      if (/\bPMPE\b|POLICIA MILITAR DE PERNAMBUCO/.test(normalized)) competitions.add("PE");
+      if (/\bPMBA\b|POLICIA MILITAR DA BAHIA/.test(normalized)) competitions.add("BA");
+    });
+  });
+  const ordered = ["AL", "PE", "BA"].filter((label) => competitions.has(label));
+  if (ordered.length === 3) return "os 3";
+  return ordered.join(" + ");
+}
+
 function isSundayStudyActivity(item) {
   return   ["simulado", "caderno_erros", "planejamento"].includes(item?.subjectId);
 }
@@ -10533,6 +10557,11 @@ export default function App() {
                         <p className="text-sm text-stone-700">
                           Assunto do dia: {item.topic}
                         </p>
+                        {scheduleExamIndicator(item, roadmap) && (
+                          <p className="mt-1 text-xs font-black tracking-wide text-indigo-700">
+                            {scheduleExamIndicator(item, roadmap)}
+                          </p>
+                        )}
                         {item.carryover && item.status !== "concluido" && (
                           <p className="mt-2 rounded-2xl bg-white/80 px-4 py-2 text-sm font-bold text-red-700">
                             Pendência priorizada antes dos blocos normais. Se
@@ -10747,6 +10776,11 @@ export default function App() {
                             {item.subject}
                           </h3>
                           <p className="text-sm text-stone-600">{item.topic}</p>
+                          {scheduleExamIndicator(item, roadmap) && (
+                            <p className="mt-1 text-xs font-black tracking-wide text-indigo-700">
+                              {scheduleExamIndicator(item, roadmap)}
+                            </p>
+                          )}
                           {item.carryover && item.status !== "concluido" && (
                             <p className="mt-2 rounded-2xl bg-white/80 px-4 py-2 text-sm font-bold text-red-700">
                               Pendente do dia anterior — concluir antes do
