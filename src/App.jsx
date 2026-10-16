@@ -1101,7 +1101,7 @@ function scheduleExamIndicator(item, roadmap) {
     });
   });
   const ordered = ["AL", "PE", "BA"].filter((label) => competitions.has(label));
-  if (ordered.length === 3) return "os 3";
+  if (ordered.length === 3) return "Os 3";
   return ordered.join(" + ");
 }
 

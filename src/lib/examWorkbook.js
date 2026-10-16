@@ -130,7 +130,7 @@ export function parseExamWorkbookRows(rows, exams = []) {
     const resolved = [];
     for (const contest of contests) {
       const canonical = allowedExams.get(normalize(contest)) ||
-        (/^[\p{L}\p{N}][\p{L}\p{N}\s.'’()/_&-]*$/u.test(contest)
+        (/^[\p{L}\p{N}][\p{L}\p{N}\s.'’()/_&+-]*$/u.test(contest)
           ? contest
           : "");
       if (!canonical) errors.push(`Linha ${rowNumber}: concurso inválido na coluna E: “${contest}”.`);

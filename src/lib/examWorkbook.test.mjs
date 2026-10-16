@@ -24,6 +24,24 @@ test("parses each row's exact concurso list without changing topic titles", () =
   assert.deepEqual(parsed.subjects[0].topics[1].examLabels, ["PMPE"]);
 });
 
+test("preserves the exact column E value for composite and full-name labels", () => {
+  const topicTitle = "Assunto de exemplo para testar preservação de dados";
+  const labels = [
+    "AL + PE",
+    "os 3",
+    "Polícia Militar do Estado de Alagoas",
+  ];
+  const parsed = parseExamWorkbookRows([
+    header,
+    ["Matemática", 3, topicTitle, "Alta", labels[0]],
+    ["", "", "Outro tópico compartilhado", "Média", labels[1]],
+    ["", "", "Outro tópico de rótulo formal", "Baixa", labels[2]],
+  ]);
+  assert.equal(parsed.error, undefined);
+  assert.equal(parsed.subjects[0].topics[0].text, topicTitle);
+  assert.deepEqual(parsed.subjects[0].topics.map((topic) => topic.examLabels[0]), labels);
+});
+
 test("rejects a missing or incorrect Concurso header", () => {
   assert.match(parseExamWorkbookRows([[...header.slice(0, 4), "Concursos"]]).error, /Cabeçalho inválido/);
   assert.match(parseExamWorkbookRows([[...header.slice(0, 4), ""]]).error, /Cabeçalho inválido/);
