@@ -108,7 +108,22 @@ test("zero matches return zero counts and zero progress", () => {
     hardest: 0,
     mediumDifficulty: 0,
     lowDifficulty: 0,
+    highPending: 0,
+    mediumPending: 0,
+    lowPending: 0,
+    hardestPending: 0,
+    mediumDifficultyPending: 0,
+    lowDifficultyPending: 0,
   });
+});
+
+test("topic option keys scope duplicate topic ids to their subject", () => {
+  const result = filterRoadmapAndSummarize(roadmap, {
+    competition: "PMAL",
+    topicKey: "matematica:alpe",
+  });
+  assert.deepEqual(result.subjects.map((subject) => subject.subject), ["Matemática"]);
+  assert.deepEqual(result.subjects.flatMap((subject) => subject.topics.map((topic) => topic.id)), ["alpe"]);
 });
 
 test("search uses the same records for the visible list and summary", () => {

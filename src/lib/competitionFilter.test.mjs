@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  competitionFilterOptions,
   competitionsFromLabels,
   topicsForCompetition,
 } from "./competitionFilter.js";
@@ -50,6 +51,17 @@ test("normalizes full state police names and composite column E labels consisten
   );
   assert.deepEqual(competitionsFromLabels(["os 3"]), ["PMAL", "PMPE", "PMBA"]);
   assert.deepEqual(competitionsFromLabels(["PMAL/PMPE"]), ["PMAL", "PMPE"]);
+});
+
+test("competition selector exposes canonical options for composite spreadsheet labels", () => {
+  assert.deepEqual(
+    competitionFilterOptions(["AL + PE", "PMBA", "os 3"]),
+    ["PMAL", "PMPE", "PMBA"],
+  );
+  assert.deepEqual(
+    competitionFilterOptions(["AL + PE", "Concurso Novo 2030"]),
+    ["PMAL", "PMPE", "Concurso Novo 2030"],
+  );
 });
 
 test("competition filtering composes with subject, topic, status, and priority filters", () => {

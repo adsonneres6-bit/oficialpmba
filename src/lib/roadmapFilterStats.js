@@ -26,6 +26,7 @@ export function filterRoadmapAndSummarize(roadmap = [], filters = {}) {
     const topics = topicsForCompetition(subject.topics || [], filters.competition)
       .filter((topic) => {
         if (filters.topicId && filters.topicId !== "all" && topic.id !== filters.topicId) return false;
+        if (filters.topicKey && filters.topicKey !== "all" && `${subject.id}:${topic.id}` !== filters.topicKey) return false;
         if (search && !subjectMatchesSearch && !normalizeSearch(topic.title).includes(search)) return false;
         if (filters.status === "concluidos" && !topic.done) return false;
         if (filters.status === "pendentes" && topic.done) return false;
@@ -60,6 +61,12 @@ export function filterRoadmapAndSummarize(roadmap = [], filters = {}) {
       hardest: countByDifficulty("Alta"),
       mediumDifficulty: countByDifficulty("Média"),
       lowDifficulty: countByDifficulty("Baixa"),
+      highPending: topics.filter((topic) => !topic.done && topic.priority === "Alta").length,
+      mediumPending: topics.filter((topic) => !topic.done && topic.priority === "Média").length,
+      lowPending: topics.filter((topic) => !topic.done && topic.priority === "Baixa").length,
+      hardestPending: topics.filter((topic) => !topic.done && topic.difficulty === "Alta").length,
+      mediumDifficultyPending: topics.filter((topic) => !topic.done && topic.difficulty === "Média").length,
+      lowDifficultyPending: topics.filter((topic) => !topic.done && topic.difficulty === "Baixa").length,
     },
   };
 }

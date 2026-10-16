@@ -43,7 +43,22 @@ export function competitionsFromLabels(labels = []) {
 }
 
 export function competitionLabelMatches(label, selectedCompetition) {
-  return competitionsFromLabels([label]).includes(selectedCompetition);
+  const recognizedCompetitions = competitionsFromLabels([label]);
+  if (recognizedCompetitions.length) {
+    return recognizedCompetitions.includes(selectedCompetition);
+  }
+  return String(label || "").trim() === String(selectedCompetition || "").trim();
+}
+
+export function competitionFilterOptions(labels = []) {
+  const values = [...new Set((labels || []).map((label) => String(label || "").trim()).filter(Boolean))];
+  const recognized = competitionOrder.filter((competition) =>
+    values.some((label) => competitionsFromLabels([label]).includes(competition)),
+  );
+  const unrecognized = values
+    .filter((label) => competitionsFromLabels([label]).length === 0)
+    .sort((left, right) => left.localeCompare(right, "pt-BR"));
+  return [...recognized, ...unrecognized];
 }
 
 export function topicsForCompetition(topics = [], selectedCompetition = "all") {

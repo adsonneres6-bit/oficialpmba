@@ -59,6 +59,8 @@ import {
   preserveExamLabels,
   validateExamCompetitions,
 } from "./lib/examWorkbook.js";
+import { competitionFilterOptions } from "./lib/competitionFilter.js";
+import { filterRoadmapAndSummarize } from "./lib/roadmapFilterStats.js";
 import {
   AlertTriangle,
   BarChart3,
@@ -3521,6 +3523,7 @@ export default function App() {
   const cyclePerformanceAutoOpenedRef = useRef(false);
   const [reportDayFilter, setReportDayFilter] = useState("all");
   const [roadmapSubject, setRoadmapSubject] = useState("all");
+  const [roadmapTopic, setRoadmapTopic] = useState("all");
   const [subjectsSearch, setSubjectsSearch] = useState("");
   const [roadmapExam, setRoadmapExam] = useState("all");
   const [roadmapStatus, setRoadmapStatus] = useState("todos");
@@ -4252,54 +4255,48 @@ export default function App() {
     };
   }, [roadmap]);
 
-  const selectedRoadmapStats = useMemo(() => {
-    const selectedSubjects =
+  const roadmapExamLabels = useMemo(
+    () => competitionFilterOptions(collectScheduleExamLabels(roadmap)),
+    [roadmap],
+  );
+  const competitionScopedRoadmap = useMemo(
+    () => filterRoadmapAndSummarize(roadmap, { competition: roadmapExam }).subjects,
+    [roadmap, roadmapExam],
+  );
+  const roadmapSubjectOptions = competitionScopedRoadmap;
+  const roadmapTopicOptions = useMemo(
+    () =>
+      competitionScopedRoadmap
+        .filter((subject) => roadmapSubject === "all" || subject.id === roadmapSubject)
+        .flatMap((subject) =>
+          subject.topics.map((topic) => ({
+            key: `${subject.id}:${topic.id}`,
+            title: topic.title,
+            subject: subject.subject,
+          })),
+        ),
+    [competitionScopedRoadmap, roadmapSubject],
+  );
+  const roadmapFilterResult = useMemo(
+    () =>
+      filterRoadmapAndSummarize(roadmap, {
+        competition: roadmapExam,
+        subjectId: roadmapSubject,
+        topicKey: roadmapTopic,
+        search: subjectsSearch,
+        status: roadmapStatus === "todos" ? "todos" : roadmapStatus,
+        priority: roadmapPriority,
+      }),
+    [roadmap, roadmapExam, roadmapSubject, roadmapTopic, subjectsSearch, roadmapStatus, roadmapPriority],
+  );
+  const filteredRoadmap = roadmapFilterResult.subjects;
+  const selectedRoadmapStats = {
+    ...roadmapFilterResult.stats,
+    label:
       roadmapSubject === "all"
-        ? roadmap
-        : roadmap.filter((subject) => subject.id === roadmapSubject);
-    const topics = selectedSubjects.flatMap((subject) =>
-      subject.topics.map((topic) => ({
-        ...topic,
-        subject: subject.subject,
-        subjectId: subject.id,
-        weight: subject.weight,
-      })),
-    );
-    const done = topics.filter((topic) => topic.done).length;
-    const highPending = topics.filter(
-      (topic) => !topic.done && topic.priority === "Alta",
-    ).length;
-    const mediumPending = topics.filter(
-      (topic) => !topic.done && topic.priority === "Média",
-    ).length;
-    const lowPending = topics.filter(
-      (topic) => !topic.done && topic.priority === "Baixa",
-    ).length;
-    const hardestPending = topics.filter(
-      (topic) => !topic.done && topic.difficulty === "Alta",
-    ).length;
-    const mediumDifficultyPending = topics.filter(
-      (topic) => !topic.done && topic.difficulty === "Média",
-    ).length;
-    const lowDifficultyPending = topics.filter(
-      (topic) => !topic.done && topic.difficulty === "Baixa",
-    ).length;
-    return {
-      total: topics.length,
-      done,
-      percent: topics.length ? Math.round((done / topics.length) * 100) : 0,
-      highPending,
-      mediumPending,
-      lowPending,
-      hardestPending,
-      mediumDifficultyPending,
-      lowDifficultyPending,
-      label:
-        roadmapSubject === "all"
-          ? "todas as matérias"
-          : selectedSubjects[0]?.subject || "matéria",
-    };
-  }, [roadmap, roadmapSubject]);
+        ? "todas as matérias"
+        : roadmap.find((subject) => subject.id === roadmapSubject)?.subject || "matéria",
+  };
 
   const questionErrorSummary = useMemo(
     () => summarizeQuestionErrors(questionErrors),
@@ -5066,31 +5063,6 @@ export default function App() {
       ),
     };
   }, [roadmap, scheduleSubjectFrequencyExamFilter, selectedScheduleSubjectFrequency]);
-  const roadmapExamLabels = collectScheduleExamLabels(roadmap);
-  const normalizedSubjectsSearch = withoutAccents(subjectsSearch.trim()).toLocaleLowerCase("pt-BR");
-  const filteredRoadmap = roadmap
-    .filter((item) => roadmapSubject === "all" || item.id === roadmapSubject)
-    .map((item) => {
-      const subjectMatchesSearch = normalizedSubjectsSearch
-        ? withoutAccents(item.subject || "").toLocaleLowerCase("pt-BR").includes(normalizedSubjectsSearch)
-        : false;
-      return {
-        ...item,
-        topics: item.topics.filter((topic) => {
-          const matchesSearch =
-            !normalizedSubjectsSearch ||
-            subjectMatchesSearch ||
-            withoutAccents(topic.title || "").toLocaleLowerCase("pt-BR").includes(normalizedSubjectsSearch);
-          return (
-            matchesSearch &&
-            (roadmapExam === "all" || topic.examLabels?.includes(roadmapExam)) &&
-            (roadmapStatus === "todos" ||
-              (roadmapStatus === "concluidos" ? topic.done : !topic.done)) &&
-            (roadmapPriority === "todas" || topic.priority === roadmapPriority)
-          );
-        }),
-      };
-    });
   const weeklyGoalReport = useMemo(() => {
     const plannedQuestions = Math.max(0, Number(settings.weeklyQuestions) || 0);
     const now = new Date();
@@ -11024,6 +10996,9 @@ export default function App() {
                             >
                               {dayEntries.map((entry) => {
                                 const item = entry.items[rowIndex];
+                                const examIndicator = item
+                                  ? scheduleExamIndicator(item, roadmap)
+                                  : "";
                                 return (
                                   <td
                                     key={`${entry.dayKey}-${rowIndex}`}
@@ -11060,6 +11035,11 @@ export default function App() {
                                         <p className="mt-1 text-xs font-semibold leading-relaxed text-stone-600">
                                           {item.topic}
                                         </p>
+                                        {examIndicator && (
+                                          <p className="mt-2 inline-flex max-w-full rounded-full bg-indigo-100 px-2.5 py-1 text-[11px] font-black tracking-wide text-indigo-800">
+                                            {examIndicator}
+                                          </p>
+                                        )}
                                       </div>
                                     ) : (
                                       <div
@@ -11878,7 +11858,7 @@ export default function App() {
                 />
               </div>
               <Card className="p-5">
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
                   <input
                     type="search"
                     value={subjectsSearch}
@@ -11889,19 +11869,41 @@ export default function App() {
                   />
                   <select
                     value={roadmapSubject}
-                    onChange={(event) => setRoadmapSubject(event.target.value)}
+                    onChange={(event) => {
+                      setRoadmapSubject(event.target.value);
+                      setRoadmapTopic("all");
+                    }}
                     className="rounded-2xl border border-stone-200 px-4 py-3 text-sm"
                   >
                     <option value="all">Todas as matérias</option>
-                    {roadmap.map((item) => (
+                    {roadmapSubjectOptions.map((item) => (
                       <option key={item.id} value={item.id}>
                         {item.subject}
                       </option>
                     ))}
                   </select>
                   <select
+                    value={roadmapTopic}
+                    onChange={(event) => setRoadmapTopic(event.target.value)}
+                    aria-label="Filtrar por assunto"
+                    className="rounded-2xl border border-stone-200 px-4 py-3 text-sm"
+                  >
+                    <option value="all">Todos os assuntos</option>
+                    {roadmapTopicOptions.map((topic) => (
+                      <option key={topic.key} value={topic.key}>
+                        {roadmapSubject === "all"
+                          ? `${topic.subject} — ${topic.title}`
+                          : topic.title}
+                      </option>
+                    ))}
+                  </select>
+                  <select
                     value={roadmapExam}
-                    onChange={(event) => setRoadmapExam(event.target.value)}
+                    onChange={(event) => {
+                      setRoadmapExam(event.target.value);
+                      setRoadmapSubject("all");
+                      setRoadmapTopic("all");
+                    }}
                     aria-label="Filtrar por concurso"
                     className="rounded-2xl border border-stone-200 px-4 py-3 text-sm"
                   >
@@ -11934,12 +11936,15 @@ export default function App() {
                 </div>
               </Card>
               <div className="grid gap-5">
+                {filteredRoadmap.length === 0 && (
+                  <Card className="p-5 text-sm font-semibold text-stone-500">
+                    Nenhum assunto encontrado para os filtros selecionados.
+                  </Card>
+                )}
                 {filteredRoadmap.map((subject) => {
-                  const originalSubject = getSubject(roadmap, subject.id);
                   const doneCount =
-                    originalSubject?.topics.filter((topic) => topic.done)
-                      .length || 0;
-                  const totalCount = originalSubject?.topics.length || 0;
+                    subject.topics.filter((topic) => topic.done).length || 0;
+                  const totalCount = subject.topics.length || 0;
                   const percent = totalCount
                     ? Math.round((doneCount / totalCount) * 100)
                     : 0;
@@ -11966,7 +11971,7 @@ export default function App() {
                               </Badge>
                               <Badge tone="red">
                                 {
-                                  (originalSubject?.topics || []).filter(
+                                  subject.topics.filter(
                                     (topic) =>
                                       !topic.done && topic.priority === "Alta",
                                   ).length
@@ -11975,7 +11980,7 @@ export default function App() {
                               </Badge>
                               <Badge tone="amber">
                                 {
-                                  (originalSubject?.topics || []).filter(
+                                  subject.topics.filter(
                                     (topic) =>
                                       !topic.done && topic.priority === "Média",
                                   ).length
@@ -11984,7 +11989,7 @@ export default function App() {
                               </Badge>
                               <Badge>
                                 {
-                                  (originalSubject?.topics || []).filter(
+                                  subject.topics.filter(
                                     (topic) =>
                                       !topic.done && topic.priority === "Baixa",
                                   ).length
@@ -12005,7 +12010,7 @@ export default function App() {
                                 : "sem desempenho registrado"}{" "}
                               • Difíceis pendentes:{" "}
                               {
-                                (originalSubject?.topics || []).filter(
+                                subject.topics.filter(
                                   (topic) =>
                                     !topic.done && topic.difficulty === "Alta",
                                 ).length
