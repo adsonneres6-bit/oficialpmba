@@ -11600,7 +11600,7 @@ export default function App() {
                             <div className="grid grid-cols-2 gap-2">
                               <div className="rounded-xl bg-white/80 p-3">
                                 <p className="text-xs text-stone-500">
-                                  Total de matÃ©rias do concurso
+                                  Total de materias do concurso
                                 </p>
                                 <p className="text-xl font-black text-stone-950">
                                   {selectedScheduleSubjectCoverage.total}
@@ -11608,7 +11608,7 @@ export default function App() {
                               </div>
                               <div className="rounded-xl bg-white/80 p-3">
                                 <p className="text-xs text-stone-500">
-                                  MatÃ©rias contempladas
+                                  materias contempladas
                                 </p>
                                 <p className="text-xl font-black text-emerald-700">
                                   {selectedScheduleSubjectCoverage.covered} de{" "}
@@ -11617,7 +11617,7 @@ export default function App() {
                               </div>
                               <div className="rounded-xl bg-white/80 p-3">
                                 <p className="text-xs text-stone-500">
-                                  MatÃ©rias nÃ£o contempladas
+                                  materias não contempladas
                                 </p>
                                 <p className="text-xl font-black text-red-700">
                                   {selectedScheduleSubjectCoverage.uncovered}
