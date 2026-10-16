@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { AnimatePresence, motion } from "framer-motion";
 import * as XLSX from "xlsx";
@@ -32,6 +32,33 @@ import {
   resolveReviewFlashcardTarget,
 } from "./lib/flashcards.js";
 import Flashcards from "./components/Flashcards.jsx";
+import QuestionErrors from "./components/QuestionErrors.jsx";
+import {
+  normalizeQuestionErrors,
+  questionErrorPerformance,
+  summarizeQuestionErrors,
+} from "./lib/questionErrors.js";
+import {
+  mergeRegeneratedSchedule,
+  nextAvailableCycle,
+} from "./lib/cycleGeneration.js";
+import {
+  resolveScheduleGenerationConfig,
+  subjectsPerDayForSchedule,
+} from "./lib/scheduleConfig.js";
+import {
+  calculateScheduleContestCoverage,
+  calculateScheduleSubjectFrequency,
+  collectScheduleExamLabels,
+} from "./lib/scheduleFrequency.js";
+import {
+  attachExamCompetitionData,
+  compareExamTopicPriority,
+  mergeExamCompetitions,
+  parseExamWorkbookRows,
+  preserveExamLabels,
+  validateExamCompetitions,
+} from "./lib/examWorkbook.js";
 import {
   AlertTriangle,
   BarChart3,
@@ -1678,6 +1705,8 @@ function rankTopicsByPerformance(
   questionSessions = [],
 ) {
   return [...topics].sort((a, b) => {
+    const examPriority = compareExamTopicPriority(a, b);
+    if (examPriority) return examPriority;
     const aStats = topicStatsForRanking(subjectId, a.id, questionSessions);
     const bStats = topicStatsForRanking(subjectId, b.id, questionSessions);
     if (aStats.confidence !== bStats.confidence)
@@ -1700,6 +1729,7 @@ function sortTopicsForNextCycle(subject, questionSessions = []) {
 function sortTopicsByPriority(subjectId, topics = [], questionSessions = []) {
   return [...topics].sort(
     (a, b) =>
+      compareExamTopicPriority(a, b) ||
       topicPriorityValue(b) - topicPriorityValue(a) ||
       topicPerformanceScore(subjectId, b.id, questionSessions) -
         topicPerformanceScore(subjectId, a.id, questionSessions) ||
@@ -1770,10 +1800,7 @@ function buildTwelveWeekSchedule(
     60,
     Number(scheduleConfig.dailyStudyMinutes) || 180,
   );
-  const subjectsPerDay = Math.max(
-    1,
-    Number(scheduleConfig.subjectsPerDay) || 2,
-  );
+  const subjectsPerDay = subjectsPerDayForSchedule(scheduleConfig);
   const availableMinutes = Math.max(30, dailyStudyMinutes);
   const allItems = [];
   const usedTopicIdsBySubject = {};
@@ -1854,6 +1881,7 @@ function buildTwelveWeekSchedule(
               1;
             return {
               ...subject,
+              nextTopic,
               nextTopicPriority: topicPriorityValue(nextTopic),
               repeatedYesterday,
               score:
@@ -1872,6 +1900,7 @@ function buildTwelveWeekSchedule(
           )
           .sort(
             (a, b) =>
+              compareExamTopicPriority(a.nextTopic, b.nextTopic) ||
               (weeklyUseCount[a.id] || 0) - (weeklyUseCount[b.id] || 0) ||
               Number(a.repeatedYesterday) - Number(b.repeatedYesterday) ||
               b.nextTopicPriority - a.nextTopicPriority ||
@@ -1997,7 +2026,10 @@ function createInitialState(
   examOverride = null,
   firstWeekStartDayKey = null,
 ) {
-  const roadmap = clone(examOverride?.roadmap || roadmapSeed);
+  const roadmap = attachExamCompetitionData(
+    clone(examOverride?.roadmap || roadmapSeed),
+    examOverride?.examCompetitions || [],
+  );
   const studyStartDate = examOverride?.studyStartDate || TODAY;
   const scheduleStartDayKey =
     firstWeekStartDayKey ||
@@ -2037,12 +2069,14 @@ function createInitialState(
     currentStudyIsoDate: TODAY,
     currentStudyDayKey: TODAY_DAY_KEY,
     currentStudyWeek: 1,
+    hasGeneratedTwelveCycles: false,
     lastStudyDayKey: TODAY_DAY_KEY,
     lastScheduleSnapshot: schedule,
     schedule,
     weeklySchedule,
     roadmap,
     errors: [],
+    questionErrors: [],
     reviews: [],
     flashcardsVersion: FLASHCARD_STATE_VERSION,
     flashcards: [],
@@ -2089,10 +2123,12 @@ function normalizeLoadedState(value) {
     loaded.roadmapVersion === expectedRoadmapVersion ||
     loaded.roadmapVersion === ROADMAP_VERSION ||
     isCustomExam;
-  const roadmapData =
+  const roadmapData = attachExamCompetitionData(
     (isCurrentRoadmap || isCustomExam) && hasLoadedRoadmap
       ? loaded.roadmap
-      : initial.roadmap;
+      : initial.roadmap,
+    examDefinition?.examCompetitions || loaded.examCompetitions || [],
+  );
   const scheduleConfig = {
     ...defaultScheduleConfig(),
     ...(isCurrentRoadmap ? loaded.scheduleConfig || {} : {}),
@@ -2147,6 +2183,9 @@ function normalizeLoadedState(value) {
       : isSameStudyDate
         ? Number(loaded.currentStudyWeek || calculatedCurrentWeek)
         : calculatedCurrentWeek,
+    hasGeneratedTwelveCycles: Boolean(
+      loaded.hasGeneratedTwelveCycles ?? loaded.weeklySchedule?.length,
+    ),
     roadmap: roadmapData,
     schedule: isBeforeStudyStartDate(mergedSettings.studyStartDate)
       ? []
@@ -2167,6 +2206,7 @@ function normalizeLoadedState(value) {
       roadmapData,
     ),
     errors: Array.isArray(loaded.errors) ? loaded.errors : [],
+    questionErrors: normalizeQuestionErrors(loaded.questionErrors),
     reviews: Array.isArray(loaded.reviews) ? loaded.reviews : [],
     flashcardsVersion:
       Number(loaded.flashcardsVersion) || FLASHCARD_STATE_VERSION,
@@ -3347,6 +3387,9 @@ export default function App() {
   const [weeklySchedule, setWeeklySchedule] = useState(
     initial.weeklySchedule || [],
   );
+  const [hasGeneratedTwelveCycles, setHasGeneratedTwelveCycles] = useState(
+    Boolean(initial.hasGeneratedTwelveCycles),
+  );
   const [roadmap, setRoadmap] = useState(initial.roadmap);
   const [roadmapArchive, setRoadmapArchive] = useState(
     initial.roadmapArchive || [],
@@ -3364,6 +3407,11 @@ export default function App() {
     initial.storageProfileKey || STORAGE_PROFILE_KEY,
   );
   const [errors, setErrors] = useState(initial.errors || []);
+  const [questionErrors, setQuestionErrors] = useState(
+    normalizeQuestionErrors(initial.questionErrors),
+  );
+  const [questionErrorReviewTarget, setQuestionErrorReviewTarget] =
+    useState(null);
   const [reviews, setReviews] = useState(initial.reviews || []);
   const [flashcards, setFlashcards] = useState(
     normalizeFlashcards(initial.flashcards),
@@ -3414,6 +3462,8 @@ export default function App() {
   const [scheduleDayFilter, setScheduleDayFilter] = useState("all");
   const [scheduleSubjectFrequencyFilter, setScheduleSubjectFrequencyFilter] =
     useState("all");
+  const [scheduleSubjectFrequencyExamFilter, setScheduleSubjectFrequencyExamFilter] =
+    useState("all");
   const [prioritySwap, setPrioritySwap] = useState({
     missingTopicId: "",
     replaceItemId: "",
@@ -3447,6 +3497,8 @@ export default function App() {
   const cyclePerformanceAutoOpenedRef = useRef(false);
   const [reportDayFilter, setReportDayFilter] = useState("all");
   const [roadmapSubject, setRoadmapSubject] = useState("all");
+  const [subjectsSearch, setSubjectsSearch] = useState("");
+  const [roadmapExam, setRoadmapExam] = useState("all");
   const [roadmapStatus, setRoadmapStatus] = useState("todos");
   const [roadmapPriority, setRoadmapPriority] = useState("todas");
   const [query, setQuery] = useState("");
@@ -3513,6 +3565,7 @@ export default function App() {
     label: "",
     noExamDate: false,
     examDate: "",
+    examCompetitions: [],
     studyStartDate: TODAY,
     subjects: [{ subject: "", weight: "3", topics: [""] }],
   });
@@ -3590,10 +3643,13 @@ export default function App() {
     );
     setSchedule(normalized.schedule);
     setWeeklySchedule(normalized.weeklySchedule || []);
+    setHasGeneratedTwelveCycles(normalized.hasGeneratedTwelveCycles);
     setRoadmap(normalized.roadmap);
     setRoadmapArchive(normalized.roadmapArchive || []);
     setErrors(normalized.errors || []);
+    setQuestionErrors(normalizeQuestionErrors(normalized.questionErrors));
     setReviews(normalized.reviews || []);
+    setQuestionErrorReviewTarget(null);
     setFlashcards(normalizeFlashcards(normalized.flashcards));
     setFlashcardStudyTarget(null);
     setNotes(normalized.notes || []);
@@ -3660,6 +3716,45 @@ export default function App() {
       console.error("Erro ao persistir revisão de flashcards:", error);
       setCloudStatus(
         "Falha ao salvar a revisão de flashcards; tente novamente.",
+      );
+      return { ok: false, error };
+    }
+  }
+
+  async function commitQuestionErrors(nextQuestions) {
+    if (persistenceTimeoutRef.current) {
+      clearTimeout(persistenceTimeoutRef.current);
+      persistenceTimeoutRef.current = null;
+    }
+    const normalized = normalizeQuestionErrors(nextQuestions);
+    try {
+      const result = await enqueueAppStateSave({
+        ...latestAppStateRef.current,
+        questionErrors: normalized,
+      });
+      if (!result.ok && result.source !== "local") {
+        saveStateToLocalCache({
+          ...latestAppStateRef.current,
+          questionErrors: normalizeQuestionErrors(
+            latestAppStateRef.current.questionErrors,
+          ),
+        });
+        setCloudStatus(
+          "Falha ao salvar as questÃµes erradas no Supabase; tente novamente.",
+        );
+        return { ok: false, error: result.error };
+      }
+      setQuestionErrors(normalized);
+      setCloudStatus(
+        result.ok
+          ? `QuestÃµes erradas salvas no Supabase Ã s ${new Date().toLocaleTimeString("pt-BR")}`
+          : "Supabase nÃ£o configurado; questÃµes erradas salvas no cache local.",
+      );
+      return { ok: true, source: result.source };
+    } catch (error) {
+      console.error("Erro ao persistir questÃµes erradas:", error);
+      setCloudStatus(
+        "Falha ao salvar as questÃµes erradas; tente novamente.",
       );
       return { ok: false, error };
     }
@@ -3739,6 +3834,7 @@ export default function App() {
       currentStudyIsoDate: TODAY,
       currentStudyDayKey,
       currentStudyWeek,
+      hasGeneratedTwelveCycles,
       lastStudyDayKey: currentStudyDayKey,
       lastScheduleSnapshot: schedule,
       schedule,
@@ -3746,6 +3842,7 @@ export default function App() {
       roadmap,
       roadmapArchive,
       errors,
+      questionErrors,
       reviews,
       flashcardsVersion: FLASHCARD_STATE_VERSION,
       flashcards,
@@ -3762,11 +3859,13 @@ export default function App() {
     view,
     currentStudyDayKey,
     currentStudyWeek,
+    hasGeneratedTwelveCycles,
     schedule,
     weeklySchedule,
     roadmap,
     roadmapArchive,
     errors,
+    questionErrors,
     reviews,
     flashcards,
     notes,
@@ -4178,6 +4277,10 @@ export default function App() {
     };
   }, [roadmap, roadmapSubject]);
 
+  const questionErrorSummary = useMemo(
+    () => summarizeQuestionErrors(questionErrors),
+    [questionErrors],
+  );
   const stats = useMemo(() => {
     const questionsDone = questionSessions.reduce(
       (sum, session) => sum + Number(session.done || 0),
@@ -4220,6 +4323,7 @@ export default function App() {
       progress: roadmapStats.percent,
       accuracy,
       pendingErrors,
+      pendingQuestionErrors: questionErrorSummary.reinforcement,
       completedToday,
       questionsDone,
       questionsCorrect,
@@ -4236,6 +4340,7 @@ export default function App() {
   }, [
     effectiveWeeklySchedule,
     errors,
+    questionErrorSummary.reinforcement,
     questionSessions,
     roadmapStats.percent,
     schedule,
@@ -4803,6 +4908,7 @@ export default function App() {
     return groupFlashcardDashboardActivities({
       traditionalReviews,
       cards: flashcards,
+      questionErrors,
       roadmap,
       examId: activeExamKeyState,
       today: TODAY,
@@ -4810,6 +4916,7 @@ export default function App() {
   }, [
     activeExamKeyState,
     flashcards,
+    questionErrors,
     roadmap,
     sortedReviews,
   ]);
@@ -4870,32 +4977,37 @@ export default function App() {
         ),
     [schedule],
   );
-  const scheduleWeekItems = useMemo(
+  const scheduleSubjectFrequencyExamLabels = collectScheduleExamLabels(roadmap);
+  const scheduleSubjectFrequency = useMemo(
     () =>
-      effectiveWeeklySchedule.filter(
-        (item) =>
-          scheduleWeekFilter === "all" ||
-          Number(item.week) === Number(scheduleWeekFilter),
-      ),
-    [effectiveWeeklySchedule, scheduleWeekFilter],
+      calculateScheduleSubjectFrequency({
+        subjects: subjectsList,
+        roadmap,
+        scheduleItems: effectiveWeeklySchedule,
+        cycle: scheduleWeekFilter,
+        examLabel: scheduleSubjectFrequencyExamFilter,
+      }).map((subject) => ({
+        ...subject,
+        cycle: subjectCycleCoverage(
+          scheduleSubjectFrequencyExamFilter === "all"
+            ? getSubject(roadmap, subject.id)
+            : {
+                ...getSubject(roadmap, subject.id),
+                topics: (getSubject(roadmap, subject.id)?.topics || []).filter(
+                  (topic) => topic.examLabels?.includes(scheduleSubjectFrequencyExamFilter),
+                ),
+              },
+          subject.items,
+        ),
+      })),
+    [
+      effectiveWeeklySchedule,
+      roadmap,
+      scheduleSubjectFrequencyExamFilter,
+      scheduleWeekFilter,
+      subjectsList,
+    ],
   );
-  const scheduleSubjectFrequency = useMemo(() => {
-    const studyItems = scheduleWeekItems.filter(
-      (item) =>
-        ![
-          "questoes",
-          "simulado",
-          "caderno_erros",
-          "planejamento",
-        ].includes(item.subjectId),
-    );
-    return subjectsList.map((subject) => {
-      const items = studyItems.filter((item) => item.subjectId === subject.id);
-      const subjectData = getSubject(roadmap, subject.id);
-      const cycle = subjectCycleCoverage(subjectData, items);
-      return { ...subject, count: items.length, items, cycle };
-    });
-  }, [scheduleWeekItems, subjectsList, roadmap]);
   const selectedScheduleSubjectFrequency = useMemo(
     () =>
       scheduleSubjectFrequencyFilter === "all"
@@ -4905,17 +5017,56 @@ export default function App() {
           ) || null,
     [scheduleSubjectFrequency, scheduleSubjectFrequencyFilter],
   );
+  const visibleScheduleSubjectFrequency = scheduleSubjectFrequency.filter(
+    (subject) => subject.count > 0,
+  );
+  const selectedScheduleSubjectCoverage = useMemo(
+    () =>
+      calculateScheduleContestCoverage({
+        roadmap,
+        frequencies: scheduleSubjectFrequency,
+        examLabel: scheduleSubjectFrequencyExamFilter,
+      }),
+    [roadmap, scheduleSubjectFrequency, scheduleSubjectFrequencyExamFilter],
+  );
+  const selectedFrequencyRoadmapSubject = useMemo(() => {
+    const subject = getSubject(
+      roadmap,
+      selectedScheduleSubjectFrequency?.id,
+    );
+    if (!subject || scheduleSubjectFrequencyExamFilter === "all") return subject;
+    return {
+      ...subject,
+      topics: (subject.topics || []).filter((topic) =>
+        topic.examLabels?.includes(scheduleSubjectFrequencyExamFilter),
+      ),
+    };
+  }, [roadmap, scheduleSubjectFrequencyExamFilter, selectedScheduleSubjectFrequency]);
+  const roadmapExamLabels = collectScheduleExamLabels(roadmap);
+  const normalizedSubjectsSearch = withoutAccents(subjectsSearch.trim()).toLocaleLowerCase("pt-BR");
   const filteredRoadmap = roadmap
     .filter((item) => roadmapSubject === "all" || item.id === roadmapSubject)
-    .map((item) => ({
-      ...item,
-      topics: item.topics.filter(
-        (topic) =>
-          (roadmapStatus === "todos" ||
-            (roadmapStatus === "concluidos" ? topic.done : !topic.done)) &&
-          (roadmapPriority === "todas" || topic.priority === roadmapPriority),
-      ),
-    }));
+    .map((item) => {
+      const subjectMatchesSearch = normalizedSubjectsSearch
+        ? withoutAccents(item.subject || "").toLocaleLowerCase("pt-BR").includes(normalizedSubjectsSearch)
+        : false;
+      return {
+        ...item,
+        topics: item.topics.filter((topic) => {
+          const matchesSearch =
+            !normalizedSubjectsSearch ||
+            subjectMatchesSearch ||
+            withoutAccents(topic.title || "").toLocaleLowerCase("pt-BR").includes(normalizedSubjectsSearch);
+          return (
+            matchesSearch &&
+            (roadmapExam === "all" || topic.examLabels?.includes(roadmapExam)) &&
+            (roadmapStatus === "todos" ||
+              (roadmapStatus === "concluidos" ? topic.done : !topic.done)) &&
+            (roadmapPriority === "todas" || topic.priority === roadmapPriority)
+          );
+        }),
+      };
+    });
   const weeklyGoalReport = useMemo(() => {
     const plannedQuestions = Math.max(0, Number(settings.weeklyQuestions) || 0);
     const now = new Date();
@@ -5466,7 +5617,8 @@ export default function App() {
     ["simulated", Trophy, "Simulado"],
     ["reviews", RotateCcw, "Revisões"],
     ["flashcards", Layers, "Flashcards"],
-    ["errors", AlertTriangle, "Erros"],
+    ["question-errors", CheckSquare, "Erros de Questões"],
+    ["errors", AlertTriangle, "Caderno de Erros"],
     ["notes", NotebookPen, "Anotações"],
     ["weights", BarChart3, "Pesos"],
     ["report", FileText, "Relatório"],
@@ -5493,23 +5645,11 @@ export default function App() {
   }
 
   function generateWeeklySchedule(configOverride = scheduleConfig) {
-    const activeCyclePendencies = pendingStudyItemsForCycle(currentStudyWeek);
-    if (weeklySchedule.length && activeCyclePendencies.length) {
-      openConfirmDialog({
-        title: "Ciclo atual ainda não concluído",
-        message:
-          "O cronograma não pode ser regenerado enquanto houver matérias pendentes no ciclo atual. Conclua essas matérias antes de liberar novos assuntos.",
-        confirmLabel: "Entendi",
-        cancelLabel: "Fechar",
-        tone: "amber",
-        onConfirm: () => {},
-      });
-      return;
-    }
-    const targetConfig = {
-      ...defaultScheduleConfig(),
-      ...(configOverride || {}),
-    };
+    const targetConfig = resolveScheduleGenerationConfig(
+      configOverride,
+      scheduleConfig,
+      defaultScheduleConfig(),
+    );
     const generated = buildTwelveWeekSchedule(
       roadmap,
       targetConfig,
@@ -5517,32 +5657,10 @@ export default function App() {
       questionSessions,
       studyDayKeyForISODate(settings.studyStartDate),
     );
-    setWeeklySchedule((current) => {
-      const progressItems = current.filter(
-        (item) => item.status === "concluido" || item.carryover,
-      );
-      return generated.map((item) => {
-        const progressItem = progressItems.find(
-          (saved) =>
-            saved.id === item.id ||
-            (saved.week === item.week &&
-              saved.dayKey === item.dayKey &&
-              saved.subjectId === item.subjectId &&
-              saved.topicId === item.topicId),
-        );
-        return progressItem
-          ? {
-              ...item,
-              status: progressItem.status,
-              completedAt: progressItem.completedAt,
-              elapsedSeconds:
-                progressItem.elapsedSeconds || item.elapsedSeconds,
-              carryover: progressItem.carryover,
-              carryoverFrom: progressItem.carryoverFrom,
-            }
-          : item;
-      });
-    });
+    setWeeklySchedule((current) =>
+      mergeRegeneratedSchedule(generated, current),
+    );
+    setHasGeneratedTwelveCycles(true);
     const todayGenerated = todayScheduleFromWeekly(generated, roadmap);
     const hasProgress = schedule.some(
       (item) =>
@@ -5793,18 +5911,6 @@ export default function App() {
       : Number(scheduleWeekFilter),
   ) {
     const targetWeek = Number(week) || effectiveCycleWeek;
-    if (isCycleBlockedForEditing(targetWeek)) {
-      openConfirmDialog({
-        title: "Próximo ciclo bloqueado",
-        message:
-          "Só é possível preparar o próximo ciclo. Conclua todas as matérias do ciclo atual antes de liberar novos assuntos.",
-        confirmLabel: "Entendi",
-        cancelLabel: "Fechar",
-        tone: "amber",
-        onConfirm: () => {},
-      });
-      return;
-    }
     setManualScheduleWeek(targetWeek);
     setManualScheduleDraft(draftFromWeek(targetWeek));
     setManualScheduleMessage("");
@@ -5870,18 +5976,6 @@ export default function App() {
   }
 
   function applyPerformanceSuggestionToManualDraft() {
-    if (isCycleBlockedForEditing(manualScheduleWeek)) {
-      openConfirmDialog({
-        title: "Próximo ciclo bloqueado",
-        message:
-          "Só é possível sugerir o próximo ciclo depois que todas as matérias do ciclo atual forem concluídas.",
-        confirmLabel: "Entendi",
-        cancelLabel: "Fechar",
-        tone: "amber",
-        onConfirm: () => {},
-      });
-      return;
-    }
     const hasPerformanceData =
       questionSessions.length > 0 || errors.length > 0 || reviews.length > 0;
     setManualScheduleDraft(suggestedManualDraftForWeek(manualScheduleWeek));
@@ -5980,18 +6074,6 @@ export default function App() {
   }
 
   function saveManualSchedule() {
-    if (isCycleBlockedForEditing(manualScheduleWeek)) {
-      openConfirmDialog({
-        title: "Próximo ciclo bloqueado",
-        message:
-          "Só é possível salvar o próximo ciclo depois que todas as matérias do ciclo atual forem concluídas.",
-        confirmLabel: "Entendi",
-        cancelLabel: "Fechar",
-        tone: "amber",
-        onConfirm: () => {},
-      });
-      return;
-    }
     const newWeekItems = buildManualWeeklyItems(
       manualScheduleWeek,
       manualScheduleDraft,
@@ -6080,6 +6162,15 @@ export default function App() {
   function startFlashcardsForTarget(target) {
     setFlashcardStudyTarget({ ...target, requestId: uid("flashcard_review") });
     setView("flashcards");
+  }
+
+  function startQuestionErrorsForTarget(target) {
+    setQuestionErrorReviewTarget({
+      ...target,
+      examId: target.examId || activeExamKeyState,
+      requestId: uid("question_error_review"),
+    });
+    setView("question-errors");
   }
 
   function openTraditionalReview(review) {
@@ -6226,6 +6317,7 @@ export default function App() {
       ),
     );
     setWeeklySchedule(nextWeeklySchedule);
+    setHasGeneratedTwelveCycles(true);
     setSchedule(
       scheduleFromWeekly(
         nextWeeklySchedule,
@@ -6242,16 +6334,6 @@ export default function App() {
     setManualScheduleWeek(1);
     setReportWeekFilter(1);
     setScheduleDayFilter("all");
-  }
-
-  function isCycleBlockedForEditing(targetWeek) {
-    const activeWeek = Number(currentStudyWeek) || 1;
-    const requestedWeek = Number(targetWeek) || activeWeek;
-    return (
-      requestedWeek > activeWeek + 1 ||
-      (requestedWeek > activeWeek &&
-        pendingStudyItemsForCycle(activeWeek).length > 0)
-    );
   }
 
   function moveStudyToNextDay() {
@@ -6291,7 +6373,7 @@ export default function App() {
           : "Mudar para o próximo dia?",
       message:
         sourceDayKey === "domingo" && pendingCount
-          ? `Ainda há ${pendingCount} matéria(s) ou pendência(s) em aberto. O próximo ciclo só será liberado depois que todas forem concluídas.`
+          ? `Ainda há ${pendingCount} matéria(s) ou pendência(s) em aberto. Elas permanecerão pendentes no histórico; avançar não as marca como concluídas.`
           : pendingCount
             ? `Os ${pendingCount} bloco(s) não concluído(s) vão entrar no próximo dia como "Pendente do dia anterior". ${dailyQuestionGoalReport.missingQuestions > 0 ? `Também serão levadas ${dailyQuestionGoalReport.missingQuestions} questão(ões) pendente(s) para a meta do próximo dia.` : ""}`
             : `O sistema vai carregar o próximo dia de estudo do cronograma. ${dailyQuestionGoalReport.missingQuestions > 0 ? `Também serão levadas ${dailyQuestionGoalReport.missingQuestions} questão(ões) pendente(s) para a meta do próximo dia.` : ""}`,
@@ -6306,6 +6388,30 @@ export default function App() {
           targetWeek,
         ),
     });
+  }
+
+  function jumpToNextCycle() {
+    if (blockUntilStudyStartDate()) return;
+    const targetWeek = nextAvailableCycle(currentStudyWeek, WEEK_NUMBERS.length);
+    if (!targetWeek) return;
+    if (activeTimerRef.current) {
+      activeTimerRef.current = null;
+      setActiveBlockId(null);
+    }
+    const firstDay = "segunda";
+    setCurrentStudyWeek(targetWeek);
+    setCurrentStudyDayKey(firstDay);
+    setWeeklyWeekFilter(targetWeek);
+    setWeeklyDayFilter(firstDay);
+    setScheduleWeekFilter(targetWeek);
+    setScheduleDayFilter("all");
+    setManualScheduleWeek(targetWeek);
+    setReportWeekFilter(targetWeek);
+    setSchedule(
+      scheduleFromWeekly(effectiveWeeklySchedule, roadmap, targetWeek, firstDay),
+    );
+    setQuestionsExcusedToday(0);
+    setView("today");
   }
 
   function reflowScheduleWithPending(
@@ -6559,89 +6665,6 @@ export default function App() {
     targetWeek,
   ) {
     if (blockUntilStudyStartDate()) return;
-    const activeWeek = Number(currentStudyWeek) || 1;
-    if (sourceWeek !== activeWeek || targetWeek > activeWeek + 1) {
-      openConfirmDialog({
-        title: "Avanço de ciclo bloqueado",
-        message:
-          "O ciclo selecionado para visualização não altera o ciclo atual. Avance somente a partir do ciclo ativo e na ordem do cronograma.",
-        confirmLabel: "Entendi",
-        cancelLabel: "Fechar",
-        tone: "amber",
-        onConfirm: () => {},
-      });
-      return;
-    }
-    const finalDayPendencies =
-      sourceDayKey === "domingo" && targetWeek > sourceWeek
-        ? pendingStudyItemsForCycle(sourceWeek)
-        : [];
-    if (finalDayPendencies.length) {
-      if (activeTimerRef.current) {
-        activeTimerRef.current = null;
-        setActiveBlockId(null);
-      }
-      const pendingRoots = new Set(
-        finalDayPendencies.map((item) => item.carryoverSourceId || item.id),
-      );
-      const finalSundayItems = finalDayPendencies.map((item) => {
-        const rootId = item.carryoverSourceId || item.id;
-        const elapsed = liveElapsedSeconds(item);
-        return {
-          ...item,
-          id: `cycle-final-w${sourceWeek}-${rootId}`,
-          week: sourceWeek,
-          dayKey: "domingo",
-          dayLabel: dayLabel("domingo"),
-          carryover: true,
-          carryoverSourceId: rootId,
-          carryoverSourceWeek: sourceWeek,
-          carryoverSourceDay: item.carryoverSourceDay || item.dayKey,
-          carryoverLabel: "Pendência final do ciclo",
-          status: "pendente",
-          elapsedSeconds: elapsed,
-          baseElapsedSeconds: elapsed,
-          timerStartedAt: null,
-          completedAt: null,
-        };
-      });
-      const preservedSundayItems = scheduleFromWeekly(
-        effectiveWeeklySchedule,
-        roadmap,
-        sourceWeek,
-        "domingo",
-      ).filter(
-        (item) => item.status === "concluido" || isSundayFixedBlock(item),
-      );
-      setWeeklySchedule((current) => [
-        ...current.filter((item) => {
-          const rootId = item.carryoverSourceId || item.id;
-          const isPendingSundaySource =
-            Number(item.week) === Number(sourceWeek) &&
-            item.dayKey === "domingo" &&
-            pendingRoots.has(rootId);
-          const isOldCarryover = item.carryover && pendingRoots.has(rootId);
-          return !isPendingSundaySource && !isOldCarryover;
-        }),
-        ...finalSundayItems,
-      ]);
-      setCurrentStudyDayKey("domingo");
-      setCurrentStudyWeek(sourceWeek);
-      setWeeklyDayFilter("domingo");
-      setWeeklyWeekFilter(sourceWeek);
-      setSchedule([...preservedSundayItems, ...finalSundayItems]);
-      setQuestionsExcusedToday(0);
-      setView("today");
-      openConfirmDialog({
-        title: "Ciclo atual ainda não concluído",
-        message: `${finalSundayItems.length} matéria(s) ou pendência(s) ainda precisam ser concluídas. O Ciclo ${sourceWeek + 1} permanece bloqueado. Conclua todas as pendências deste ciclo para avançar.`,
-        confirmLabel: "Continuar no domingo",
-        cancelLabel: "Fechar",
-        tone: "amber",
-        onConfirm: () => {},
-      });
-      return;
-    }
     if (sourceDayKey === "domingo" && targetWeek > 12) {
       openConfirmDialog({
         title: "Ciclos concluídos",
@@ -8091,6 +8114,17 @@ export default function App() {
     }));
   }
 
+  function updateExamCompetition(index, field, value) {
+    setExamForm((current) => ({
+      ...current,
+      examCompetitions: current.examCompetitions.map((competition, currentIndex) =>
+        currentIndex === index
+          ? { ...competition, [field]: value }
+          : competition,
+      ),
+    }));
+  }
+
   function addExamSubject() {
     setExamForm((current) => ({
       ...current,
@@ -8153,6 +8187,7 @@ export default function App() {
                 priority: normalizeTopicPriority(topic.priority),
                 difficulty: topic.difficulty,
                 done: topic.done,
+                examLabels: preserveExamLabels(topic),
               }
             : { text: String(topic || "").trim(), priority: "Média" },
           )
@@ -8196,6 +8231,11 @@ export default function App() {
               done: Boolean(topic.done),
               priority: normalizeTopicPriority(topic.priority),
               difficulty: topic.difficulty || "Média",
+              examLabels: preserveExamLabels(topic),
+              examCompetitions: (form.examCompetitions || []).filter(
+                (competition) =>
+                  preserveExamLabels(topic).includes(competition.label),
+              ),
             };
           }),
         };
@@ -8271,6 +8311,7 @@ export default function App() {
       label: "",
       noExamDate: false,
       examDate: "",
+      examCompetitions: [],
       studyStartDate: TODAY,
       subjects: [{ subject: "", weight: "3", topics: [""] }],
     });
@@ -8283,10 +8324,19 @@ export default function App() {
         : Array.isArray(exam?.roadmap) && exam.roadmap.length
           ? exam.roadmap
           : roadmap;
+    const examCompetitions = mergeExamCompetitions(
+      sourceRoadmap,
+      exam?.examCompetitions,
+    );
+    const primaryCompetitionDate =
+      examCompetitions.find((item) => item.order === "1")?.examDate ||
+      exam?.examDate ||
+      "";
     return {
       label: exam?.label || "",
-      noExamDate: Boolean(exam?.noExamDate || !exam?.examDate),
-      examDate: exam?.examDate || "",
+      noExamDate: Boolean(exam?.noExamDate || !primaryCompetitionDate),
+      examDate: primaryCompetitionDate,
+      examCompetitions,
       studyStartDate:
         exam?.studyStartDate ||
         (exam?.key === activeExamKeyState
@@ -8309,6 +8359,7 @@ export default function App() {
                         priority: topic.priority || "Média",
                         difficulty: topic.difficulty,
                         done: topic.done,
+                        examLabels: preserveExamLabels(topic),
                       }
                     : topic,
                 )
@@ -8455,9 +8506,19 @@ export default function App() {
 
   async function createCustomExam() {
     const label = String(examForm.label || "").trim();
+    const examCompetitions = mergeExamCompetitions(
+      examForm.subjects,
+      examForm.examCompetitions,
+    );
+    const competitionError = validateExamCompetitions(
+      examCompetitions,
+      examForm.noExamDate,
+    );
+    if (competitionError)
+      return setExamCreatorMessage(competitionError);
     if (!label)
       return setExamCreatorMessage("Informe o nome do concurso / edital.");
-    if (!examForm.noExamDate && !examForm.examDate)
+    if (!examCompetitions.length && !examForm.noExamDate && !examForm.examDate)
       return setExamCreatorMessage(
         "Informe a data da prova ou marque que ainda não há data definida.",
       );
@@ -8469,7 +8530,10 @@ export default function App() {
       return setExamCreatorMessage(
         "A data de início dos estudos deve ser hoje ou uma data futura.",
       );
-    const proposedRoadmap = buildRoadmapFromExamForm(examForm);
+    const proposedRoadmap = buildRoadmapFromExamForm({
+      ...examForm,
+      examCompetitions,
+    });
     if (!proposedRoadmap.length)
       return setExamCreatorMessage(
         "Cadastre pelo menos uma matéria com assunto.",
@@ -8491,8 +8555,13 @@ export default function App() {
         status: editing?.status || "personalizado",
         revision: versionSuffix,
         roadmapVersion: `CUSTOM_${key.toUpperCase()}_V${versionSuffix}`,
-        examDate: examForm.noExamDate ? "" : examForm.examDate,
+        examDate: examCompetitions.length
+          ? examCompetitions.find((item) => item.order === "1")?.examDate || ""
+          : examForm.noExamDate
+            ? ""
+            : examForm.examDate,
         noExamDate: examForm.noExamDate,
+        examCompetitions,
         studyStartDate,
         roadmap: proposedRoadmap,
       };
@@ -9055,60 +9124,30 @@ export default function App() {
           blankrows: false,
         });
 
-        const groupedSubjects = new Map();
-        const subjectWeights = new Map();
-
-        let currentSubject = "";
-        let currentWeight = "3";
-
-        rows.forEach((row, index) => {
-          const colA = String(row?.[0] || "").trim();
-          const colB = String(row?.[1] || "").trim();
-          const colC = String(row?.[2] || "").trim();
-          const colD = String(row?.[3] || "").trim();
-
-          if (index === 0 && colA.toLowerCase().includes("mat")) {
-            return;
-          }
-
-          if (!colA && !colB && !colC && !colD) {
-            return;
-          }
-
-          if (colA) {
-            currentSubject = colA;
-            currentWeight = colB || "3";
-            subjectWeights.set(currentSubject, currentWeight);
-          }
-
-          if (!currentSubject || !colC) {
-            return;
-          }
-
-          if (!groupedSubjects.has(currentSubject)) {
-            groupedSubjects.set(currentSubject, []);
-          }
-
-          const priority = normalizeTopicPriority(colD);
-
-          groupedSubjects.get(currentSubject).push({ text: colC, priority });
-        });
-
-        const subjects = Array.from(groupedSubjects.entries()).map(
-          ([subject, topics]) => ({
-            subject,
-            weight: subjectWeights.get(subject) || "3",
-            topics,
-          }),
+        const parsed = parseExamWorkbookRows(
+          rows,
+          allAvailableExams(customExams, deletedBuiltInExamKeys),
         );
-
-        if (!subjects.length) {
-          throw new Error("empty");
+        if (parsed.error) {
+          setExamCreatorMessage(parsed.error);
+          event.target.value = "";
+          return;
         }
+        const subjects = parsed.subjects.map((subject) => ({
+          ...subject,
+          topics: subject.topics.map((topic) => ({
+            ...topic,
+            priority: normalizeTopicPriority(topic.priority),
+          })),
+        }));
 
         setExamForm((current) => ({
           ...current,
           subjects,
+          examCompetitions: mergeExamCompetitions(
+            subjects,
+            current.examCompetitions,
+          ),
         }));
 
         setExamCreatorMode("manual");
@@ -9261,10 +9300,12 @@ export default function App() {
       currentStudyWeek,
       schedule,
       weeklySchedule,
+      hasGeneratedTwelveCycles,
       roadmap,
       customExams,
       deletedBuiltInExamKeys,
       errors,
+      questionErrors,
       reviews,
       flashcardsVersion: FLASHCARD_STATE_VERSION,
       flashcards,
@@ -9311,6 +9352,9 @@ export default function App() {
           ? questionSessions.length
           : 0,
         errors: Array.isArray(errors) ? errors.length : 0,
+        questionErrors: Array.isArray(questionErrors)
+          ? questionErrors.length
+          : 0,
         reviews: Array.isArray(reviews) ? reviews.length : 0,
         flashcards: Array.isArray(flashcards) ? flashcards.length : 0,
         notes: Array.isArray(notes) ? notes.length : 0,
@@ -9431,6 +9475,8 @@ export default function App() {
           ),
         );
         setErrors(Array.isArray(data.errors) ? data.errors : []);
+        setQuestionErrors(normalizeQuestionErrors(data.questionErrors));
+        setQuestionErrorReviewTarget(null);
         setReviews(Array.isArray(data.reviews) ? data.reviews : []);
         setFlashcards(normalizeFlashcards(data.flashcards));
         setFlashcardStudyTarget(null);
@@ -9858,6 +9904,15 @@ export default function App() {
                   <Badge tone={stats.pendingErrors > 0 ? "red" : "green"}>
                     {stats.pendingErrors} erros pendentes
                   </Badge>
+                  <button
+                    type="button"
+                    onClick={() => setView("question-errors")}
+                    className="rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700"
+                  >
+                    <Badge tone={stats.pendingQuestionErrors > 0 ? "red" : "green"}>
+                      {stats.pendingQuestionErrors} Questões erradas para revisar
+                    </Badge>
+                  </button>
                   <Badge tone="amber">
                     Sequência: {stats.studyStreak} dia
                     {stats.studyStreak === 1 ? "" : "s"}
@@ -10249,6 +10304,25 @@ export default function App() {
                                       </div>
                                     );
                                   })}
+                                  {group.questionErrors.length > 0 && (
+                                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-stone-100 pt-2">
+                                      <span className="text-xs font-semibold">
+                                        Erros de questÃµes para reforÃ§ar: {group.questionErrors.length}
+                                      </span>
+                                      <button
+                                        onClick={() =>
+                                          startQuestionErrorsForTarget({
+                                            examId: group.examId,
+                                            subjectId: group.subjectId,
+                                            topicId: group.topicId,
+                                          })
+                                        }
+                                        className="rounded-lg bg-stone-950 px-2.5 py-1.5 text-xs font-bold text-white"
+                                      >
+                                        Retomar questÃµes
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
                               ))}
                             </div>
@@ -10400,6 +10474,13 @@ export default function App() {
                       className="rounded-2xl bg-amber-600 px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-amber-700"
                     >
                       Mudar para o próximo dia
+                    </button>
+                    <button
+                      onClick={jumpToNextCycle}
+                      disabled={!nextAvailableCycle(currentStudyWeek, WEEK_NUMBERS.length)}
+                      className="rounded-2xl border border-stone-300 bg-white px-4 py-3 text-sm font-black text-stone-800 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Pular para o próximo ciclo
                     </button>
                   </div>
                 </div>
@@ -10753,7 +10834,7 @@ export default function App() {
                       ))}
                     </select>
                     <button
-                      onClick={generateWeeklySchedule}
+                      onClick={() => generateWeeklySchedule()}
                       className="rounded-2xl bg-stone-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-stone-800"
                     >
                       <Zap size={16} className="inline" /> Gerar 12 ciclos
@@ -11211,6 +11292,40 @@ export default function App() {
                         </option>
                       ))}
                     </select>
+                    <select
+                      value={scheduleSubjectFrequencyExamFilter}
+                      onChange={(event) =>
+                        setScheduleSubjectFrequencyExamFilter(event.target.value)
+                      }
+                      aria-label="Filtrar frequência por concurso"
+                      className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold text-stone-700"
+                    >
+                      <option value="all">Todos os concursos</option>
+                      {scheduleSubjectFrequencyExamLabels.map((examLabel) => (
+                        <option key={examLabel} value={examLabel}>
+                          {examLabel}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={scheduleWeekFilter}
+                      onChange={(event) =>
+                        setScheduleWeekFilter(
+                          event.target.value === "all"
+                            ? "all"
+                            : Number(event.target.value),
+                        )
+                      }
+                      aria-label="Filtrar frequência por ciclo"
+                      className="w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold text-stone-700"
+                    >
+                      <option value="all">Todos os ciclos</option>
+                      {WEEK_NUMBERS.map((week) => (
+                        <option key={week} value={week}>
+                          Ciclo {week}
+                        </option>
+                      ))}
+                    </select>
                     {selectedScheduleSubjectFrequency ? (
                       <div className="rounded-3xl border border-amber-200 bg-amber-50 p-5">
                         <div className="flex items-start justify-between gap-3">
@@ -11231,7 +11346,28 @@ export default function App() {
                               {scheduleWeekFilter === "all"
                                 ? "Todos os ciclos"
                                 : `Ciclo ${scheduleWeekFilter}`}
+                              {scheduleSubjectFrequencyExamFilter !== "all" &&
+                                ` · ${scheduleSubjectFrequencyExamFilter}`}
                             </p>
+                            <div className="mt-3 space-y-1">
+                              {selectedScheduleSubjectFrequency.topicFrequencies.map(
+                                ({ topic, count }) => (
+                                  <div
+                                    key={topic.id}
+                                    className="flex items-center justify-between gap-3 rounded-xl bg-white/70 px-3 py-2 text-sm"
+                                  >
+                                    <span className="text-stone-700">{topic.title}</span>
+                                    <Badge>{count} vez(es)</Badge>
+                                  </div>
+                                ),
+                              )}
+                              {selectedScheduleSubjectFrequency.topicFrequencies.length ===
+                                0 && (
+                                <p className="text-xs text-stone-500">
+                                  Nenhum assunto correspondente aparece no cronograma filtrado.
+                                </p>
+                              )}
+                            </div>
                           </div>
                           <p className="text-4xl font-black text-amber-950">
                             {selectedScheduleSubjectFrequency.count}
@@ -11275,10 +11411,7 @@ export default function App() {
                           </div>
                           <p className="mt-3">
                             {cycleCoverageMessage(
-                              getSubject(
-                                roadmap,
-                                selectedScheduleSubjectFrequency.id,
-                              ),
+                              selectedFrequencyRoadmapSubject,
                               selectedScheduleSubjectFrequency.items,
                               scheduleWeekFilter === "all"
                                 ? "nos 12 ciclos"
@@ -11287,10 +11420,7 @@ export default function App() {
                           </p>
                         </div>
                         {(() => {
-                          const subjectData = getSubject(
-                            roadmap,
-                            selectedScheduleSubjectFrequency.id,
-                          );
+                          const subjectData = selectedFrequencyRoadmapSubject;
                           const details = subjectCycleTopicDetails(
                             subjectData,
                             selectedScheduleSubjectFrequency.items,
@@ -11453,8 +11583,64 @@ export default function App() {
                         </div>
                       </div>
                     ) : (
-                      <div className="grid gap-3">
-                        {scheduleSubjectFrequency.map((subject) => (
+                      <>
+                        {selectedScheduleSubjectCoverage && (
+                          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                              <h3 className="font-black text-stone-900">
+                                Resumo do concurso
+                              </h3>
+                              <span className="text-xs font-semibold text-amber-900">
+                                {scheduleSubjectFrequencyExamFilter} ·{" "}
+                                {scheduleWeekFilter === "all"
+                                  ? "Todos os ciclos"
+                                  : `Ciclo ${scheduleWeekFilter}`}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="rounded-xl bg-white/80 p-3">
+                                <p className="text-xs text-stone-500">
+                                  Total de matÃ©rias do concurso
+                                </p>
+                                <p className="text-xl font-black text-stone-950">
+                                  {selectedScheduleSubjectCoverage.total}
+                                </p>
+                              </div>
+                              <div className="rounded-xl bg-white/80 p-3">
+                                <p className="text-xs text-stone-500">
+                                  MatÃ©rias contempladas
+                                </p>
+                                <p className="text-xl font-black text-emerald-700">
+                                  {selectedScheduleSubjectCoverage.covered} de{" "}
+                                  {selectedScheduleSubjectCoverage.total}
+                                </p>
+                              </div>
+                              <div className="rounded-xl bg-white/80 p-3">
+                                <p className="text-xs text-stone-500">
+                                  MatÃ©rias nÃ£o contempladas
+                                </p>
+                                <p className="text-xl font-black text-red-700">
+                                  {selectedScheduleSubjectCoverage.uncovered}
+                                </p>
+                              </div>
+                              <div className="rounded-xl bg-white/80 p-3">
+                                <p className="text-xs text-stone-500">
+                                  Cobertura do ciclo
+                                </p>
+                                <p className="text-xl font-black text-stone-950">
+                                  {selectedScheduleSubjectCoverage.percent}%
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        {visibleScheduleSubjectFrequency.length === 0 ? (
+                          <div className="rounded-2xl bg-stone-50 p-4 text-sm text-stone-500">
+                            Nenhum assunto aparece no cronograma com esses filtros.
+                          </div>
+                        ) : (
+                        <div className="grid gap-3">
+                          {visibleScheduleSubjectFrequency.map((subject) => (
                           <div
                             key={subject.id}
                             className="rounded-2xl border border-stone-200 bg-stone-50 p-4"
@@ -11478,6 +11664,26 @@ export default function App() {
                                 <h3 className="mt-2 font-black text-stone-950">
                                   {subject.name}
                                 </h3>
+                                <div className="mt-3 space-y-1">
+                                  {subject.topicFrequencies.map(
+                                    ({ topic, count }) => (
+                                      <div
+                                        key={topic.id}
+                                        className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-sm"
+                                      >
+                                        <span className="text-stone-700">
+                                          {topic.title}
+                                        </span>
+                                        <Badge>{count} vez(es)</Badge>
+                                      </div>
+                                    ),
+                                  )}
+                                  {subject.topicFrequencies.length === 0 && (
+                                    <p className="text-xs text-stone-500">
+                                      Nenhum assunto planejado com esses filtros.
+                                    </p>
+                                  )}
+                                </div>
                                 <p
                                   className={cls(
                                     "mt-1 text-xs font-semibold",
@@ -11496,8 +11702,10 @@ export default function App() {
                               </p>
                             </div>
                           </div>
-                        ))}
-                      </div>
+                          ))}
+                        </div>
+                        )}
+                      </>
                     )}
                   </div>
                 </Card>
@@ -11636,7 +11844,15 @@ export default function App() {
                 />
               </div>
               <Card className="p-5">
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                  <input
+                    type="search"
+                    value={subjectsSearch}
+                    onChange={(event) => setSubjectsSearch(event.target.value)}
+                    placeholder="Pesquisar matéria ou assunto"
+                    aria-label="Pesquisar matéria ou assunto"
+                    className="min-w-0 rounded-2xl border border-stone-200 px-4 py-3 text-sm"
+                  />
                   <select
                     value={roadmapSubject}
                     onChange={(event) => setRoadmapSubject(event.target.value)}
@@ -11646,6 +11862,19 @@ export default function App() {
                     {roadmap.map((item) => (
                       <option key={item.id} value={item.id}>
                         {item.subject}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={roadmapExam}
+                    onChange={(event) => setRoadmapExam(event.target.value)}
+                    aria-label="Filtrar por concurso"
+                    className="rounded-2xl border border-stone-200 px-4 py-3 text-sm"
+                  >
+                    <option value="all">Todos os concursos</option>
+                    {roadmapExamLabels.map((examLabel) => (
+                      <option key={examLabel} value={examLabel}>
+                        {examLabel}
                       </option>
                     ))}
                   </select>
@@ -11793,6 +12022,15 @@ export default function App() {
                                 >
                                   {topic.title}
                                 </h4>
+                                {!!topic.examLabels?.length && (
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {topic.examLabels.map((examLabel) => (
+                                      <Badge key={examLabel} tone="amber">
+                                        {examLabel}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                )}
                                 <p className="text-sm text-stone-500">
                                   Dificuldade: {topic.difficulty} • Status:{" "}
                                   {topic.done ? "concluído" : "pendente"}
@@ -12931,6 +13169,20 @@ export default function App() {
                             card.topicId === reviewTarget.topicId,
                         )
                       : [];
+                    const topicQuestionErrors = reviewTarget
+                      ? questionErrors.filter(
+                          (item) =>
+                            !item.archived &&
+                            (!item.examId ||
+                              item.examId === activeExamKeyState) &&
+                            item.subjectId === reviewTarget.subjectId &&
+                            item.topicId === reviewTarget.topicId,
+                        )
+                      : [];
+                    const pendingTopicQuestionErrors =
+                      topicQuestionErrors.filter(
+                        (item) => questionErrorPerformance(item).needsReinforcement,
+                      );
                     const flashcardActivity = reviewTarget
                       ? flashcardTopicActivity(topicFlashcards, reviewTarget)
                       : null;
@@ -13023,6 +13275,10 @@ export default function App() {
                                   {attentionFlashcards} para reforço pela dificuldade/histórico.
                                 </p>
                               )}
+                              <p className="mt-1">
+                                Erros de questÃµes: {topicQuestionErrors.length} cadastrada(s) Â·{" "}
+                                {pendingTopicQuestionErrors.length} pendente(s) de reforÃ§o.
+                              </p>
                             </div>
                             {flashcardActivity?.totalCards > 0 && (
                               <details className="mt-2 rounded-xl border border-stone-200 bg-white p-3 text-sm text-stone-700">
@@ -13048,6 +13304,20 @@ export default function App() {
                             )}
                           </div>
                           <div className="flex flex-wrap gap-2">
+                            {pendingTopicQuestionErrors.length > 0 && reviewTarget && (
+                              <button
+                                onClick={() =>
+                                  startQuestionErrorsForTarget({
+                                    examId: review.examId || activeExamKeyState,
+                                    subjectId: reviewTarget.subjectId,
+                                    topicId: reviewTarget.topicId,
+                                  })
+                                }
+                                className="rounded-2xl bg-stone-950 px-4 py-3 text-sm font-semibold text-white"
+                              >
+                                <CheckSquare size={15} className="inline" /> Retomar erros ({pendingTopicQuestionErrors.length})
+                              </button>
+                            )}
                             {reviewFlashcards.length > 0 && (
                               <button
                                 onClick={() => startFlashcardsForReview(review)}
@@ -13106,6 +13376,23 @@ export default function App() {
                 reviewStages={reviews}
                 studyTarget={flashcardStudyTarget}
                 onStudyTargetConsumed={() => setFlashcardStudyTarget(null)}
+              />
+            </motion.section>
+          )}
+          {view === "question-errors" && (
+            <motion.section
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-6"
+            >
+              <QuestionErrors
+                questions={questionErrors}
+                exams={allAvailableExams(customExams, deletedBuiltInExamKeys)}
+                activeExamId={activeExamKeyState}
+                roadmap={roadmap}
+                onCommitQuestions={commitQuestionErrors}
+                reviewTarget={questionErrorReviewTarget}
+                onReviewTargetConsumed={() => setQuestionErrorReviewTarget(null)}
               />
             </motion.section>
           )}
@@ -14020,7 +14307,8 @@ export default function App() {
                           placeholder="Ex: Soldado 2027"
                         />
                       </label>
-                      <label className="space-y-1 text-sm font-semibold text-stone-700">
+                      {!examForm.examCompetitions.length && (
+                        <label className="space-y-1 text-sm font-semibold text-stone-700">
                         Data da prova
                         <input
                           value={examForm.examDate}
@@ -14034,7 +14322,8 @@ export default function App() {
                           type="date"
                           className="w-full rounded-2xl border border-stone-200 px-4 py-3 disabled:bg-stone-100 disabled:text-stone-400"
                         />
-                      </label>
+                        </label>
+                      )}
                       {!editingExamKey && (
                         <label className="space-y-1 text-sm font-semibold text-stone-700">
                           Data de início dos estudos
@@ -14058,6 +14347,65 @@ export default function App() {
                         </label>
                       )}
                     </div>
+                    {!!examForm.examCompetitions.length && (
+                      <div className="space-y-3 rounded-2xl border border-stone-200 bg-white p-4">
+                        <p className="text-sm font-bold text-stone-700">
+                          Defina a prioridade e a data da prova de cada concurso.
+                        </p>
+                        <div className="space-y-2">
+                          {examForm.examCompetitions.map((competition, index) => (
+                            <div
+                              key={competition.label}
+                              className="grid gap-3 rounded-xl border border-stone-100 p-3 md:grid-cols-[1fr_180px_220px] md:items-center"
+                            >
+                              <strong className="text-sm text-stone-800">
+                                {competition.label}
+                              </strong>
+                              <label className="space-y-1 text-xs font-semibold text-stone-600">
+                                Ordem de prioridade
+                                <select
+                                  value={competition.order}
+                                  onChange={(event) =>
+                                    updateExamCompetition(index, "order", event.target.value)
+                                  }
+                                  className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm"
+                                >
+                                  <option value="">Selecione</option>
+                                  {["1", "2", "3"].map((order) => {
+                                    const usedByAnother = examForm.examCompetitions.some(
+                                      (item, itemIndex) =>
+                                        itemIndex !== index && item.order === order,
+                                    );
+                                    return (
+                                      <option
+                                        key={order}
+                                        value={order}
+                                        disabled={usedByAnother}
+                                      >
+                                        {order}º
+                                      </option>
+                                    );
+                                  })}
+                                </select>
+                              </label>
+                              <label className="space-y-1 text-xs font-semibold text-stone-600">
+                                Data da prova
+                                <input
+                                  type="date"
+                                  value={competition.examDate}
+                                  required={competition.order === "1" && !examForm.noExamDate}
+                                  disabled={examForm.noExamDate}
+                                  onChange={(event) =>
+                                    updateExamCompetition(index, "examDate", event.target.value)
+                                  }
+                                  className="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm disabled:bg-stone-100"
+                                />
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <label className="flex items-center gap-2 rounded-2xl border border-stone-200 bg-white p-3 text-sm font-semibold text-stone-700">
                       <input
                         type="checkbox"
@@ -14069,10 +14417,16 @@ export default function App() {
                             examDate: event.target.checked
                               ? ""
                               : current.examDate,
+                            examCompetitions: event.target.checked
+                              ? current.examCompetitions.map((competition) => ({
+                                  ...competition,
+                                  examDate: "",
+                                }))
+                              : current.examCompetitions,
                           }))
                         }
                       />
-                      Ainda não tem data definida de prova
+                      {examForm.examCompetitions.length ? 'Nenhum dos concursos tem data de prova definida' : 'Ainda não tem data definida de prova'}
                     </label>
 
                     <div className="flex flex-wrap gap-2">
@@ -14152,21 +14506,36 @@ export default function App() {
                                   typeof topic === "object"
                                     ? topic.priority || "Média"
                                     : "Média";
+                                const topicExamLabels = preserveExamLabels(topic);
                                 return (
-                                  <div key={topicIndex} className="flex gap-2">
-                                    <input
-                                      value={topicText}
-                                      onChange={(event) =>
-                                        updateExamTopic(
-                                          subjectIndex,
-                                          topicIndex,
-                                          "text",
-                                          event.target.value,
-                                        )
-                                      }
-                                      className="w-full rounded-2xl border border-stone-200 px-4 py-3"
-                                      placeholder={`Assunto ${topicIndex + 1}`}
-                                    />
+                                  <div
+                                    key={topicIndex}
+                                    className="flex flex-wrap items-center gap-2 md:flex-nowrap"
+                                  >
+                                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 md:flex-nowrap">
+                                      <input
+                                        value={topicText}
+                                        onChange={(event) =>
+                                          updateExamTopic(
+                                            subjectIndex,
+                                            topicIndex,
+                                            "text",
+                                            event.target.value,
+                                          )
+                                        }
+                                        className="min-w-[180px] flex-1 rounded-2xl border border-stone-200 px-4 py-3"
+                                        placeholder={`Assunto ${topicIndex + 1}`}
+                                      />
+                                      {!!topicExamLabels.length && (
+                                        <div className="flex flex-wrap gap-1 md:flex-nowrap">
+                                          {topicExamLabels.map((examLabel) => (
+                                            <Badge key={examLabel} tone="amber">
+                                              {examLabel}
+                                            </Badge>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
                                     <select
                                       value={topicPriority}
                                       onChange={(event) =>
@@ -14177,7 +14546,7 @@ export default function App() {
                                           event.target.value,
                                         )
                                       }
-                                      className="rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-700"
+                                      className="shrink-0 rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-700"
                                     >
                                       <option value="Alta">Alta</option>
                                       <option value="Média">Média</option>
@@ -14191,7 +14560,7 @@ export default function App() {
                                         )
                                       }
                                       disabled={subject.topics.length === 1}
-                                      className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-red-700 disabled:opacity-40"
+                                      className="shrink-0 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-red-700 disabled:opacity-40"
                                     >
                                       <Trash2 size={16} />
                                     </button>
@@ -14219,9 +14588,7 @@ export default function App() {
                     ) : (
                       <div className="space-y-3">
                         <div className="rounded-2xl border border-stone-200 bg-white p-4 text-sm text-stone-600">
-                          Formato esperado: coluna A = Matéria, coluna B = Peso,
-                          coluna C = Assunto, coluna D = Prioridade (Alta /
-                          Média / Baixa). A primeira linha pode ser cabeçalho.
+                          Formato esperado: coluna A = Matéria, B = Peso, C = Assunto, D = Prioridade (Alta / Média / Baixa) e E = Concurso. A primeira linha deve conter esses cabeçalhos.
                         </div>
                         <input
                           ref={fileInputRef}

@@ -920,6 +920,7 @@ export function groupFlashcardDashboardActivities({
   traditionalReviews = [],
   cards = [],
   roadmap = [],
+  questionErrors = [],
   examId = "",
   today = localDateISO(),
 }) {
@@ -936,6 +937,7 @@ export function groupFlashcardDashboardActivities({
         topic: "",
         traditional: [],
         flashcardStages: [],
+        questionErrors: [],
       });
     }
     return groups.get(key);
@@ -977,6 +979,27 @@ export function groupFlashcardDashboardActivities({
     }
   });
 
+  questionErrors.forEach((item) => {
+    if (!item?.id || item.archived || !item.subjectId || !item.topicId) return;
+    if (item.examId && examId && item.examId !== examId) return;
+    const attempts = Array.isArray(item.attempts) ? item.attempts : [];
+    let consecutiveCorrect = 0;
+    for (
+      let index = attempts.length - 1;
+      index >= 0 && attempts[index]?.correct === true;
+      index -= 1
+    ) {
+      consecutiveCorrect += 1;
+    }
+    if (consecutiveCorrect >= 2) return;
+
+    const group = groups.get(
+      `${item.examId || examId || ""}|${item.subjectId}|${item.topicId}`,
+    );
+    if (!group || group.questionErrors.some((entry) => entry.id === item.id)) return;
+    group.questionErrors.push(item);
+  });
+
   return [...groups.values()]
     .map((group) => ({
       ...group,
@@ -990,6 +1013,7 @@ export function groupFlashcardDashboardActivities({
           group.flashcardStages.map((stage) => [stage.reviewId, stage]),
         ).values(),
       ],
+      questionErrors: group.questionErrors,
     }))
     .sort((left, right) => {
       const priority = (group) =>
@@ -1007,7 +1031,12 @@ export function groupFlashcardDashboardActivities({
         left.topic.localeCompare(right.topic, "pt-BR")
       );
     })
-    .filter((group) => group.traditional.length || group.flashcardStages.length);
+    .filter(
+      (group) =>
+        group.traditional.length ||
+        group.flashcardStages.length ||
+        group.questionErrors.length,
+    );
 }
 
 export function getFlashcardSummary(cards) {

@@ -46,6 +46,23 @@ test("preserves the identifier and progress when an assignment moves", () => {
   assert.equal(result[0].dayKey, "quarta");
 });
 
+test("allows restructuring a cycle with pending blocks while keeping them pending", () => {
+  const pending = scheduleItem("pending-cycle-5", 5, "segunda", "topic-a", {
+    elapsedSeconds: 120,
+    baseElapsedSeconds: 120,
+  });
+  const result = mergeManualScheduleWeek({
+    weeklySchedule: [pending],
+    newItems: [scheduleItem("edited-id", 5, "quinta", "topic-a")],
+    week: 5,
+  });
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].status, "pendente");
+  assert.equal(result[0].dayKey, "quinta");
+  assert.equal(result[0].elapsedSeconds, 120);
+});
+
 test("archives removed study history but removes an untouched pending item", () => {
   const result = mergeManualScheduleWeek({
     weeklySchedule: [
