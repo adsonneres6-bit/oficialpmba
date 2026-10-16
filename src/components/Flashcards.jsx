@@ -126,10 +126,19 @@ export default function Flashcards({
   const [confirmArchiveId, setConfirmArchiveId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [studyMessage, setStudyMessage] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [savingCardAction, setSavingCardAction] = useState(false);
   const correctedAnswersRef = useRef({});
   const ratedCardsRef = useRef(new Set());
   const correctionLockRef = useRef(false);
   const completionLockRef = useRef(new Set());
+  const cardActionLockRef = useRef(false);
+
+  useEffect(() => {
+    if (!actionMessage) return undefined;
+    const timeout = setTimeout(() => setActionMessage(""), 4500);
+    return () => clearTimeout(timeout);
+  }, [actionMessage]);
 
   const activeCards = useMemo(() => normalizeFlashcards(cards), [cards]);
   const today = localDateISO();
@@ -348,7 +357,7 @@ export default function Flashcards({
     setFormOpen(true);
   }
 
-  function saveCard(event) {
+  async function saveCard(event) {
     event.preventDefault();
     const front = form.front.trim();
     const back = form.back.trim();
@@ -408,9 +417,9 @@ export default function Flashcards({
       notes: form.correctionNotes.trim(),
       ignoreAccents: form.ignoreAccents,
     };
+    let nextCards;
     if (editingId) {
-      onCardsChange((current) =>
-        normalizeFlashcards(current).map((card) =>
+      nextCards = activeCards.map((card) =>
           card.id === editingId
             ? {
                 ...card,
@@ -428,8 +437,7 @@ export default function Flashcards({
                 updatedAt: now,
               }
             : card,
-        ),
-      );
+        );
     } else {
       const card = {
         id: `flashcard_${Date.now()}_${Math.random().toString(16).slice(2)}`,
@@ -452,28 +460,62 @@ export default function Flashcards({
         schedule: emptySchedule(),
         history: [],
       };
-      onCardsChange((current) => [...normalizeFlashcards(current), card]);
+      nextCards = [...activeCards, card];
+    }
+    const result = await commitCards(nextCards);
+    if (!result?.ok) {
+      setFormError("Não foi possível salvar o flashcard. Verifique a conexão e tente novamente.");
+      return;
     }
     setFormOpen(false);
     setFormError("");
   }
 
-  function setArchived(cardId, archived) {
-    onCardsChange((current) =>
-      normalizeFlashcards(current).map((card) =>
-        card.id === cardId
-          ? { ...card, archived, updatedAt: new Date().toISOString() }
-          : card,
-      ),
-    );
-    setConfirmArchiveId(null);
+  async function setArchived(cardId, archived) {
+    if (cardActionLockRef.current) return;
+    const card = activeCards.find((item) => item.id === cardId);
+    if (!card) return;
+    cardActionLockRef.current = true;
+    setSavingCardAction(true);
+    setActionMessage("");
+    try {
+      const nextCards = activeCards.map((item) =>
+        item.id === cardId
+          ? { ...item, archived, updatedAt: new Date().toISOString() }
+          : item,
+      );
+      const result = await commitCards(nextCards);
+      if (!result?.ok) throw result?.error || new Error("Falha ao persistir");
+      setConfirmArchiveId(null);
+      setActionMessage(archived ? "Flashcard arquivado com sucesso." : "Flashcard restaurado com sucesso.");
+    } catch (error) {
+      console.error("Falha ao atualizar arquivamento do flashcard:", error);
+      setActionMessage(archived ? "Não foi possível arquivar o flashcard. Tente novamente." : "Não foi possível restaurar o flashcard. Tente novamente.");
+    } finally {
+      cardActionLockRef.current = false;
+      setSavingCardAction(false);
+    }
   }
 
-  function deleteCard(cardId) {
-    onCardsChange((current) =>
-      normalizeFlashcards(current).filter((card) => card.id !== cardId),
-    );
-    setConfirmDeleteId(null);
+  async function deleteCard(cardId) {
+    if (cardActionLockRef.current) return;
+    cardActionLockRef.current = true;
+    setSavingCardAction(true);
+    setActionMessage("");
+    try {
+      const nextCards = activeCards.filter((card) => card.id !== cardId);
+      if (nextCards.length === activeCards.length) throw new Error("Flashcard não encontrado");
+      const result = await commitCards(nextCards);
+      if (!result?.ok) throw result?.error || new Error("Falha ao persistir");
+      setConfirmDeleteId(null);
+      setActionMessage("Flashcard excluído com sucesso.");
+    } catch (error) {
+      console.error("Falha ao excluir flashcard:", error);
+      setActionMessage("Não foi possível excluir o flashcard. Os dados foram mantidos; tente novamente.");
+    } finally {
+      cardActionLockRef.current = false;
+      setSavingCardAction(false);
+    }
   }
 
   async function finalizeCurrentCard({
@@ -1102,29 +1144,7 @@ export default function Flashcards({
               )}
             </div>
           )}
-          {confirmDeleteId && (
-            <div
-              role="alertdialog"
-              aria-label="Confirmar exclusão permanente"
-              className="flex flex-wrap items-center gap-2 rounded-2xl bg-red-50 p-3 text-sm text-red-950"
-            >
-              <span>
-                Excluir permanentemente este cartão e todo o histórico associado?
-              </span>
-              <button
-                onClick={() => deleteCard(confirmDeleteId)}
-                className="rounded-lg bg-red-800 px-3 py-2 font-semibold text-white"
-              >
-                Excluir permanentemente
-              </button>
-              <button
-                onClick={() => setConfirmDeleteId(null)}
-                className="rounded-lg border border-red-200 px-3 py-2 font-semibold"
-              >
-                Cancelar
-              </button>
-            </div>
-          )}
+
         </article>
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-stone-500">
           <span>
@@ -1843,29 +1863,26 @@ export default function Flashcards({
               <RotateCcw size={17} /> Estudar cartões novos ({filteredNewCards.length})
             </button>
           )}
-          {confirmArchiveId && (
-            <div
-              role="alertdialog"
-              aria-label="Confirmar arquivamento"
-              className="flex flex-wrap items-center gap-2 rounded-2xl bg-stone-100 p-3 text-sm"
-            >
-              <span>Arquivar este cartão e preservar seu histórico?</span>
-              <button
-                onClick={() => setArchived(confirmArchiveId, true)}
-                className="rounded-lg bg-stone-950 px-3 py-2 font-semibold text-white"
-              >
-                Confirmar
-              </button>
-              <button
-                onClick={() => setConfirmArchiveId(null)}
-                className="rounded-lg border border-stone-300 px-3 py-2 font-semibold"
-              >
-                Cancelar
-              </button>
-            </div>
-          )}
+
         </div>
       </div>
-    </section>
+      {actionMessage && (
+        <div className="pointer-events-none fixed inset-x-3 top-3 z-[100] mx-auto max-w-lg sm:inset-x-auto sm:right-6" role="status" aria-live="polite">
+          <p className="rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold text-stone-900 shadow-lg">{actionMessage}</p>
+        </div>
+      )}
+      {(confirmArchiveId || confirmDeleteId) && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingCardAction) { setConfirmArchiveId(null); setConfirmDeleteId(null); } }}>
+          <div role="alertdialog" aria-modal="true" aria-labelledby="flashcard-action-title" className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+            <h3 id="flashcard-action-title" className="text-lg font-black text-stone-950">{confirmDeleteId ? "Excluir este flashcard?" : "Arquivar este flashcard?"}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-stone-600">{confirmDeleteId ? "Essa ação removerá o cartão do sistema. O histórico associado está armazenado junto ao cartão; os demais cartões serão preservados." : "O cartão será retirado do conjunto ativo e seu histórico será preservado."}</p>
+            <div className="mt-6 flex flex-wrap justify-end gap-2">
+              <button disabled={savingCardAction} onClick={() => { setConfirmArchiveId(null); setConfirmDeleteId(null); }} className="rounded-xl border border-stone-200 px-4 py-2.5 font-semibold disabled:opacity-50">Cancelar</button>
+              {confirmArchiveId && <button disabled={savingCardAction} onClick={() => setArchived(confirmArchiveId, true)} className="rounded-xl bg-stone-950 px-4 py-2.5 font-semibold text-white disabled:opacity-50">{savingCardAction ? "Salvando…" : "Arquivar"}</button>}
+              {confirmDeleteId && <button disabled={savingCardAction} onClick={() => deleteCard(confirmDeleteId)} className="rounded-xl bg-red-800 px-4 py-2.5 font-semibold text-white disabled:opacity-50">{savingCardAction ? "Excluindo…" : "Excluir definitivamente"}</button>}
+            </div>
+          </div>
+        </div>
+      )}</section>
   );
 }

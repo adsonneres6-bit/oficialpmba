@@ -3637,6 +3637,13 @@ export default function App() {
         flashcards: nextCards,
       });
       if (!result.ok && result.source !== "local") {
+        // saveStateToSupabase writes a recoverable local snapshot before the
+        // remote upsert. Restore the last confirmed flashcards if that upsert
+        // fails so a reload cannot make an unconfirmed deletion permanent.
+        saveStateToLocalCache({
+          ...latestAppStateRef.current,
+          flashcards: normalizeFlashcards(latestAppStateRef.current.flashcards),
+        });
         setCloudStatus(
           "Falha ao salvar a revisão de flashcards no Supabase; tente novamente.",
         );
