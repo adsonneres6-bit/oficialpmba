@@ -92,6 +92,8 @@ export default function QuestionErrors({
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [deleteId, setDeleteId] = useState(null);
+  const [expandedStatements, setExpandedStatements] = useState(() => new Set());
+  const [visibleErrorReasons, setVisibleErrorReasons] = useState(() => new Set());
   const lock = useRef(false);
   const sessionIdRef = useRef("");
   const attemptRetryRef = useRef(null);
@@ -1042,13 +1044,49 @@ export default function QuestionErrors({
                         )}
                       </div>
                       <p className="mt-3 whitespace-pre-wrap font-bold">
-                        {item.statement}
+                        <span className={expandedStatements.has(item.id) ? "" : "line-clamp-4"}>
+                          {item.statement}
+                        </span>
                       </p>
+                      {(item.statement?.length > 160 || item.statement?.split("\n").length > 4) && (
+                        <button
+                          type="button"
+                          aria-expanded={expandedStatements.has(item.id)}
+                          onClick={() => setExpandedStatements((current) => {
+                            const next = new Set(current);
+                            if (next.has(item.id)) next.delete(item.id);
+                            else next.add(item.id);
+                            return next;
+                          })}
+                          className="mt-1 text-sm font-bold text-stone-700 underline underline-offset-2"
+                        >
+                          {expandedStatements.has(item.id) ? "Recolher enunciado" : "Ver enunciado completo"}
+                        </button>
+                      )}
                       {(item.originalErrorReason || item.errorReason) && (
-                        <p className="mt-2 line-clamp-2 text-sm text-stone-600">
-                          <b>Meu erro:</b>{" "}
-                          {item.originalErrorReason || item.errorReason}
-                        </p>
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            aria-expanded={visibleErrorReasons.has(item.id)}
+                            onClick={() => setVisibleErrorReasons((current) => {
+                              const next = new Set(current);
+                              if (next.has(item.id)) next.delete(item.id);
+                              else next.add(item.id);
+                              return next;
+                            })}
+                            className="text-sm font-bold text-stone-700 underline underline-offset-2"
+                          >
+                            {visibleErrorReasons.has(item.id) ? "Ocultar motivo do erro" : "Ver motivo do erro"}
+                          </button>
+                          {visibleErrorReasons.has(item.id) && (
+                            <section className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
+                              <h3 className="text-xs font-black uppercase tracking-wide text-stone-600">Por que errei esta questão</h3>
+                              <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-stone-700">
+                                {item.originalErrorReason || item.errorReason}
+                              </p>
+                            </section>
+                          )}
+                        </div>
                       )}
                       <p className="mt-2 text-xs text-stone-500">
                         Acertos: {performance.correct} · Erros:{" "}
