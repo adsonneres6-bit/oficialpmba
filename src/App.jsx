@@ -3442,6 +3442,8 @@ export default function App() {
   );
   const [questionErrorReviewTarget, setQuestionErrorReviewTarget] =
     useState(null);
+  const [questionErrorStudySessionId, setQuestionErrorStudySessionId] =
+    useState(initial.questionErrorStudySessionId || null);
   const [reviews, setReviews] = useState(initial.reviews || []);
   const [flashcards, setFlashcards] = useState(
     normalizeFlashcards(initial.flashcards),
@@ -3607,6 +3609,8 @@ export default function App() {
   const [pdfImportMessage, setPdfImportMessage] = useState("");
   const [pdfPreviewReady, setPdfPreviewReady] = useState(false);
   const [completionBlock, setCompletionBlock] = useState(null);
+  const [studyMethodPromptBlockId, setStudyMethodPromptBlockId] =
+    useState(null);
   const [completionSaving, setCompletionSaving] = useState(false);
   const [completionSaveError, setCompletionSaveError] = useState("");
   const completionSaveLockRef = useRef(false);
@@ -3659,6 +3663,9 @@ export default function App() {
   function applyLoadedState(nextState) {
     const normalized = normalizeLoadedState(nextState);
     setView(normalized.view || "dashboard");
+    setQuestionErrorStudySessionId(
+      normalized.questionErrorStudySessionId || null,
+    );
     setCurrentStudyDayKey(normalized.currentStudyDayKey || TODAY_DAY_KEY);
     setCustomExams(normalizeCustomExamList(normalized.customExams));
     setDeletedBuiltInExamKeys(
@@ -3862,6 +3869,7 @@ export default function App() {
       customExams,
       deletedBuiltInExamKeys,
       view,
+      questionErrorStudySessionId,
       currentStudyIsoDate: TODAY,
       currentStudyDayKey,
       currentStudyWeek,
@@ -3888,6 +3896,7 @@ export default function App() {
     };
   }, [
     view,
+    questionErrorStudySessionId,
     currentStudyDayKey,
     currentStudyWeek,
     hasGeneratedTwelveCycles,
@@ -4474,6 +4483,12 @@ export default function App() {
       }
     };
   }, [activeBlockId]);
+
+  useEffect(() => {
+    if (view !== "question-errors" && questionErrorStudySessionId) {
+      setQuestionErrorStudySessionId(null);
+    }
+  }, [view, questionErrorStudySessionId]);
 
   useEffect(() => {
     const initialIsoDate = TODAY;
@@ -6186,6 +6201,20 @@ export default function App() {
     setView("question-errors");
   }
 
+  function openQuestionErrorCaptureFromStudy(blockId) {
+    const session = schedule.find(
+      (item) => item.id === blockId && item.status === "andamento",
+    );
+    if (
+      !session?.studySessionId ||
+      !["traditional", "reverse"].includes(session.studyMethod)
+    ) {
+      return;
+    }
+    setQuestionErrorStudySessionId(session.studySessionId);
+    setView("question-errors");
+  }
+
   function openTraditionalReview(review) {
     startReview(review.id);
     setView("reviews");
@@ -6889,18 +6918,34 @@ export default function App() {
     setView("today");
   }
 
-  function startBlock(id) {
+  function startBlock(id, studyMethod = "") {
     if (blockUntilStudyStartDate()) return;
+    const existingBlock = schedule.find((item) => item.id === id);
+    const continuingSession = Boolean(
+      !studyMethod &&
+        existingBlock?.studyMethod &&
+        existingBlock?.studySessionId,
+    );
+    if (continuingSession) studyMethod = existingBlock.studyMethod;
+    if (!studyMethod) {
+      setStudyMethodPromptBlockId(id);
+      return;
+    }
+    const startedAt = Date.now();
+    const studySessionId = continuingSession
+      ? existingBlock.studySessionId
+      : uid("study_session");
     activeTimerRef.current = id;
     setActiveBlockId(id);
-    const now = Date.now();
-    setSchedule((current) =>
-      current.map((item) => {
+    const startItems = (items) =>
+      items.map((item) => {
         if (item.id === id)
           return {
             ...item,
             status: "andamento",
-            timerStartedAt: now,
+            studyMethod,
+            studySessionId,
+            timerStartedAt: startedAt,
             baseElapsedSeconds: liveElapsedSeconds(item),
             elapsedSeconds: liveElapsedSeconds(item),
           };
@@ -6915,8 +6960,10 @@ export default function App() {
           };
         }
         return item;
-      }),
-    );
+      });
+    setSchedule(startItems);
+    setWeeklySchedule(startItems);
+    setStudyMethodPromptBlockId(null);
   }
 
   function pauseBlock(id) {
@@ -7146,6 +7193,8 @@ export default function App() {
                 notes: "",
                 source: "completion",
                 sourceBlockId: completionBlock.id,
+                studySessionId: completionBlock.studySessionId || null,
+                studyMethod: completionBlock.studyMethod || null,
                 date: TODAY,
                 studyDate: TODAY,
                 localDate: TODAY,
@@ -7329,6 +7378,8 @@ export default function App() {
       timerStartedAt: null,
       baseElapsedSeconds: 0,
       completedAt: null,
+      studyMethod: null,
+      studySessionId: null,
       completedFromCarryover: false,
       completedFromCarryoverDay: null,
       completedFromCarryoverAt: null,
@@ -9561,6 +9612,45 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+      {studyMethodPromptBlockId && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-stone-950/50 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="study-method-title"
+            className="w-full max-w-lg rounded-3xl border border-stone-200 bg-white p-6 shadow-2xl"
+          >
+            <h2 id="study-method-title" className="text-2xl font-black text-stone-950">
+              Como você deseja estudar?
+            </h2>
+            <p className="mt-2 text-sm text-stone-600">
+              Escolha o método desta sessão. O cronômetro e o planejamento do bloco serão mantidos.
+            </p>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <button
+                onClick={() => startBlock(studyMethodPromptBlockId, "traditional")}
+                className="rounded-2xl border border-stone-200 p-4 text-left hover:bg-stone-50"
+              >
+                <span className="block font-black text-stone-950">Estudo tradicional</span>
+                <span className="mt-1 block text-sm text-stone-600">Continue o fluxo atual de teoria e questões.</span>
+              </button>
+              <button
+                onClick={() => startBlock(studyMethodPromptBlockId, "reverse")}
+                className="rounded-2xl border border-emerald-300 bg-emerald-50 p-4 text-left hover:bg-emerald-100"
+              >
+                <span className="block font-black text-emerald-950">Estudo reverso</span>
+                <span className="mt-1 block text-sm text-emerald-900">Resolva questões e registre erros ou aprendizados relevantes.</span>
+              </button>
+            </div>
+            <button
+              onClick={() => setStudyMethodPromptBlockId(null)}
+              className="mt-4 w-full rounded-2xl border border-stone-200 px-4 py-3 text-sm font-bold text-stone-700"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
       {completionBlock && (
         <CompletionModal
           block={completionBlock}
@@ -10581,6 +10671,19 @@ export default function App() {
                           <Play size={16} className="inline" />{" "}
                           {item.status === "andamento" ? "Iniciado" : "Iniciar"}
                         </button>
+                        {item.status === "andamento" &&
+                          ["traditional", "reverse"].includes(item.studyMethod) && (
+                            <button
+                              onClick={() =>
+                                openQuestionErrorCaptureFromStudy(item.id)
+                              }
+                              className={`rounded-2xl border px-4 py-3 font-semibold ${item.studyMethod === "reverse" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-indigo-200 bg-indigo-50 text-indigo-900"}`}
+                            >
+                              {item.studyMethod === "reverse"
+                                ? "Registrar aprendizado"
+                                : "Registrar erro/aprendizado"}
+                            </button>
+                          )}
                         <button
                           onClick={() => pauseBlock(item.id)}
                           disabled={item.status !== "andamento"}
@@ -12336,6 +12439,13 @@ export default function App() {
                                   {session.time} min
                                 </span>
                               )}
+                              {session.studyMethod && (
+                                <span className="rounded-full bg-indigo-50 px-3 py-1 text-indigo-700">
+                                  {session.studyMethod === "reverse"
+                                    ? "Estudo reverso"
+                                    : "Estudo tradicional"}
+                                </span>
+                              )}
                             </div>
                           </div>
                           {session.notes && (
@@ -13427,6 +13537,18 @@ export default function App() {
                 onCommitQuestions={commitQuestionErrors}
                 reviewTarget={questionErrorReviewTarget}
                 onReviewTargetConsumed={() => setQuestionErrorReviewTarget(null)}
+                activeStudySession={questionErrorStudySessionId
+                  ? schedule.find(
+                      (item) =>
+                        item.studySessionId === questionErrorStudySessionId &&
+                        item.status === "andamento",
+                    ) || null
+                  : null}
+                studySessions={[
+                  ...schedule,
+                  ...weeklySchedule,
+                  ...questionSessions,
+                ]}
               />
             </motion.section>
           )}

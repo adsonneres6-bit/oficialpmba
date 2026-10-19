@@ -9,6 +9,8 @@ export const QUESTION_ERROR_CATEGORIES = [
   "Outro",
 ];
 
+export const QUESTION_LEARNING_REVIEW_INTERVALS = [1, 7, 15, 30];
+
 export function questionAlternativeLabel(index) {
   if (!Number.isInteger(index) || index < 0) return "alternativa removida";
   let value = index + 1;
@@ -21,18 +23,160 @@ export function questionAlternativeLabel(index) {
   return label;
 }
 
-export function validateQuestionErrorDraft(draft, roadmap, activeExamId) {
+export function questionLearningReviewDueAt(
+  item,
+  studyMethod,
+  scheduledAt = new Date(),
+) {
+  if (item?.learningReviewDueAt) return item.learningReviewDueAt;
+  if (studyMethod !== "reverse" || !String(item?.correctExplanation || "").trim()) {
+    return null;
+  }
+  const scheduledTime = new Date(scheduledAt).getTime();
+  if (!Number.isFinite(scheduledTime)) return null;
+  return new Date(scheduledTime + 24 * 60 * 60 * 1000).toISOString();
+}
+
+export function getQuestionLearningReviewStatus(item, now = new Date()) {
+  if (item?.learningReviewCompletedAt || item?.learningReviewCycleCompletedAt) {
+    return { state: "completed", label: "Revisão concluída" };
+  }
+  if (!item?.learningReviewDueAt) return null;
+  const dueDate = new Date(item.learningReviewDueAt);
+  if (!Number.isFinite(dueDate.getTime())) return null;
+  const localDayNumber = (date) =>
+    Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  const dayDifference = Math.round(
+    (localDayNumber(dueDate) - localDayNumber(now)) / 86400000,
+  );
+  if (item.learningReviewNeedsReinforcement && dayDifference >= 0) {
+    return { state: "reinforcement", label: "Precisa de reforço" };
+  }
+  if (dayDifference < 0) {
+    return {
+      state: "overdue",
+      label: item.learningReviewNeedsReinforcement
+        ? "Revisão atrasada · precisa de reforço"
+        : "Revisão atrasada",
+    };
+  }
+  if (dayDifference === 0) {
+    return { state: "today", label: "Revisão prevista: hoje" };
+  }
+  if (dayDifference === 1) {
+    return { state: "tomorrow", label: "Revisão prevista: amanhã" };
+  }
+  return {
+    state: "future",
+    label: `Revisão prevista: ${dueDate.toLocaleDateString("pt-BR")}`,
+  };
+}
+
+export function completeQuestionLearningReview(item, remembered, completedAt = new Date()) {
+  const completedDate = new Date(completedAt);
+  if (!Number.isFinite(completedDate.getTime())) return item;
+  const stage = Math.min(
+    Math.max(0, Number(item?.learningReviewStage) || 0),
+    QUESTION_LEARNING_REVIEW_INTERVALS.length - 1,
+  );
+  const history = Array.isArray(item?.learningReviewHistory)
+    ? item.learningReviewHistory
+    : [];
+  const review = {
+    id: `learning_review_${completedDate.getTime()}_${history.length}`,
+    scheduledAt: item?.learningReviewDueAt || null,
+    completedAt: completedDate.toISOString(),
+    remembered: Boolean(remembered),
+    stage,
+  };
+  if (!remembered) {
+    return {
+      ...item,
+      learningReviewHistory: [...history, review],
+      learningReviewStage: stage,
+      learningReviewNeedsReinforcement: true,
+      learningReviewDueAt: new Date(
+        completedDate.getTime() + 24 * 60 * 60 * 1000,
+      ).toISOString(),
+      learningReviewCompletedAt: null,
+      updatedAt: completedDate.toISOString(),
+    };
+  }
+  const nextStage = stage + 1;
+  if (nextStage >= QUESTION_LEARNING_REVIEW_INTERVALS.length) {
+    return {
+      ...item,
+      learningReviewHistory: [...history, review],
+      learningReviewStage: QUESTION_LEARNING_REVIEW_INTERVALS.length,
+      learningReviewNeedsReinforcement: false,
+      learningReviewCycleCompletedAt: completedDate.toISOString(),
+      learningReviewCompletedAt: completedDate.toISOString(),
+      updatedAt: completedDate.toISOString(),
+    };
+  }
+  const nextDueAt = new Date(
+    completedDate.getTime() +
+      QUESTION_LEARNING_REVIEW_INTERVALS[nextStage] * 24 * 60 * 60 * 1000,
+  );
+  return {
+    ...item,
+    learningReviewHistory: [...history, review],
+    learningReviewStage: nextStage,
+    learningReviewNeedsReinforcement: false,
+    learningReviewCycleCompletedAt: null,
+    learningReviewCompletedAt: null,
+    learningReviewDueAt: nextDueAt.toISOString(),
+    updatedAt: completedDate.toISOString(),
+  };
+}
+
+export function filterQuestionErrorsByStudyMethod(items, method, sessions) {
+  if (!method || method === "all") return items;
+  const methodsBySessionId = new Map();
+  (sessions || []).forEach((session) => {
+    if (
+      session?.studySessionId &&
+      ["traditional", "reverse"].includes(session.studyMethod)
+    ) {
+      methodsBySessionId.set(session.studySessionId, session.studyMethod);
+    }
+  });
+  return items.filter(
+    (item) => {
+      if (item.studySessionId) {
+        return methodsBySessionId.get(item.studySessionId) === method;
+      }
+      return item.studyMethod === method;
+    },
+  );
+}
+
+export function validateQuestionErrorDraft(
+  draft,
+  roadmap,
+  requireLearning = true,
+  requireStudyMethod = false,
+) {
+  if (
+    requireStudyMethod &&
+    !["traditional", "reverse"].includes(draft.studyMethod)
+  ) {
+    return "Selecione o método de estudo.";
+  }
   const subject = roadmap.find((item) => item.id === draft.subjectId);
-  if (!subject || !subject.topics?.some((topic) => topic.id === draft.topicId)) return "Selecione matéria e assunto válidos do edital ativo.";
-  if (!String(draft.statement || "").trim()) return "O enunciado é obrigatório.";
-  const questionType = draft.questionType || "multiple-choice";
-  if (!Array.isArray(draft.alternatives)) return "Configure as alternativas da questão.";
-  if (questionType === "true-false") {
-    if (draft.alternatives.length !== 2 || draft.alternatives[0]?.id !== "true" || draft.alternatives[0]?.text !== "Certo" || draft.alternatives[1]?.id !== "false" || draft.alternatives[1]?.text !== "Errado") return "Questões de Certo ou Errado devem ter apenas as opções Certo e Errado.";
-  } else if (draft.alternatives.length !== 4 && draft.alternatives.length !== 5) return "Cadastre quatro ou cinco alternativas.";
-  if (draft.alternatives.some((option) => !String(option.text || "").trim())) return "Preencha o texto de todas as alternativas.";
-  if (draft.alternatives.filter((option) => option.isCorrect).length !== 1) return "Marque exatamente uma alternativa correta.";
-  if (draft.originalAlternativeId && !draft.alternatives.some((option) => option.id === draft.originalAlternativeId)) return "A alternativa marcada originalmente não existe mais.";
+  const validOfficialTopic = subject?.topics?.some((topic) => topic.id === draft.topicId);
+  const validCustomTopic = draft.topicKind === "custom" && String(draft.topicLabel || "").trim();
+  if (!subject || (!validOfficialTopic && !validCustomTopic)) return "Selecione matéria e assunto válidos do edital ativo.";
+  if (requireLearning && !String(draft.correctExplanation || "").trim()) return "O campo O que aprendi é obrigatório.";
+  if (Array.isArray(draft.alternatives) && draft.alternatives.length > 0) {
+    const questionType = draft.questionType || "multiple-choice";
+    if (questionType === "true-false") {
+      if (draft.alternatives.length !== 2 || draft.alternatives[0]?.id !== "true" || draft.alternatives[0]?.text !== "Certo" || draft.alternatives[1]?.id !== "false" || draft.alternatives[1]?.text !== "Errado") return "Questões de Certo ou Errado devem ter apenas as opções Certo e Errado.";
+    } else if (draft.alternatives.length !== 4 && draft.alternatives.length !== 5) return "Cadastre quatro ou cinco alternativas.";
+    if (draft.alternatives.some((option) => !String(option.text || "").trim())) return "Preencha o texto de todas as alternativas.";
+    if (draft.alternatives.filter((option) => option.isCorrect).length !== 1) return "Marque exatamente uma alternativa correta.";
+    if (draft.originalAlternativeId && !draft.alternatives.some((option) => option.id === draft.originalAlternativeId)) return "A alternativa marcada originalmente não existe mais.";
+  }
   return "";
 }
 
