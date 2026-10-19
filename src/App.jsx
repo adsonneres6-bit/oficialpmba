@@ -3767,21 +3767,21 @@ export default function App() {
           ),
         });
         setCloudStatus(
-          "Falha ao salvar as questÃµes erradas no Supabase; tente novamente.",
+          "Falha ao salvar as questões erradas no Supabase; tente novamente.",
         );
         return { ok: false, error: result.error };
       }
       setQuestionErrors(normalized);
       setCloudStatus(
         result.ok
-          ? `QuestÃµes erradas salvas no Supabase Ã s ${new Date().toLocaleTimeString("pt-BR")}`
-          : "Supabase nÃ£o configurado; questÃµes erradas salvas no cache local.",
+          ? `questões erradas salvas no Supabase Ã s ${new Date().toLocaleTimeString("pt-BR")}`
+          : "Supabase nÃ£o configurado; questões erradas salvas no cache local.",
       );
       return { ok: true, source: result.source };
     } catch (error) {
-      console.error("Erro ao persistir questÃµes erradas:", error);
+      console.error("Erro ao persistir questões erradas:", error);
       setCloudStatus(
-        "Falha ao salvar as questÃµes erradas; tente novamente.",
+        "Falha ao salvar as questões erradas; tente novamente.",
       );
       return { ok: false, error };
     }
@@ -10303,7 +10303,7 @@ export default function App() {
                                   {group.questionErrors.length > 0 && (
                                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-stone-100 pt-2">
                                       <span className="text-xs font-semibold">
-                                        Erros de questÃµes para reforÃ§ar: {group.questionErrors.length}
+                                        Erros de questões para revisar: {group.questionErrors.length}
                                       </span>
                                       <button
                                         onClick={() =>
@@ -10315,7 +10315,7 @@ export default function App() {
                                         }
                                         className="rounded-lg bg-stone-950 px-2.5 py-1.5 text-xs font-bold text-white"
                                       >
-                                        Retomar questÃµes
+                                        Retomar questões
                                       </button>
                                     </div>
                                   )}
