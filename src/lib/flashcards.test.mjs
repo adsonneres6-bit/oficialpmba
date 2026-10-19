@@ -520,10 +520,10 @@ test("dashboard groups traditional and stage-eligible flashcards by context IDs"
   );
   assert.ok(topicGroup);
   assert.equal(topicGroup.traditional.length, 1);
-  assert.equal(topicGroup.flashcardStages.length, 2);
+  assert.equal(topicGroup.flashcardStages.length, 1);
   assert.ok(
-    topicGroup.flashcardStages.some(
-      (stage) => stage.reviewId === "review-completed",
+    topicGroup.flashcardStages.every(
+      (stage) => stage.reviewId !== "review-completed",
     ),
   );
   assert.deepEqual(
@@ -677,7 +677,7 @@ test("stage completion is independent, idempotent, and preserves legacy individu
   );
 });
 
-test("a completed traditional stage can remain independently pending for flashcards", () => {
+test("a completed traditional stage closes its dashboard alert cycle without reviewing flashcards", () => {
   const review = {
     id: "review-complete-traditional",
     title: "Direito Constitucional: Fundamentos da República",
@@ -695,6 +695,13 @@ test("a completed traditional stage can remain independently pending for flashca
       subjectId: "law",
       topicId: "art-1",
     })],
+    questionErrors: [{
+      id: "error-not-reviewed",
+      examId: "exam-a",
+      subjectId: "law",
+      topicId: "art-1",
+      attempts: [],
+    }],
     roadmap: [{
       id: "law",
       subject: "Direito Constitucional",
@@ -703,10 +710,50 @@ test("a completed traditional stage can remain independently pending for flashca
     examId: "exam-a",
     today: "2026-10-14",
   });
+  assert.equal(groups.length, 0);
+});
+
+test("pending flashcards can appear again in the next scheduled traditional cycle", () => {
+  const completedStage = {
+    id: "review-24h-completed",
+    title: "Direito Constitucional: Fundamentos da RepÃºblica",
+    type: "24 horas",
+    date: "14/10/2026",
+    status: "concluida",
+    examId: "exam-a",
+    subjectId: "law",
+    topicId: "art-1",
+  };
+  const nextStage = {
+    ...completedStage,
+    id: "review-7d-pending",
+    type: "7 dias",
+    date: "21/10/2026",
+    status: "pendente",
+  };
+  const card = makeCard("card-still-pending", {
+    examKey: "exam-a",
+    subjectId: "law",
+    topicId: "art-1",
+  });
+  const groups = groupFlashcardDashboardActivities({
+    traditionalReviews: [
+      { review: completedStage, status: "due" },
+      { review: nextStage, status: "due" },
+    ],
+    cards: [card],
+    roadmap: [{
+      id: "law",
+      subject: "Direito Constitucional",
+      topics: [{ id: "art-1", title: "Fundamentos da RepÃºblica" }],
+    }],
+    examId: "exam-a",
+    today: "2026-10-21",
+  });
   assert.equal(groups.length, 1);
-  assert.equal(groups[0].traditional.length, 0);
-  assert.equal(groups[0].flashcardStages.length, 1);
-  assert.equal(groups[0].flashcardStages[0].cards[0].id, "card-not-done-for-stage");
+  assert.deepEqual(groups[0].traditional.map((review) => review.id), ["review-7d-pending"]);
+  assert.deepEqual(groups[0].flashcardStages.map((stage) => stage.reviewId), ["review-7d-pending"]);
+  assert.equal(groups[0].flashcardStages[0].cards[0].id, "card-still-pending");
 });
 
 test("completion-modal drafts create new linked cards idempotently without losing history", () => {

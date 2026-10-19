@@ -945,6 +945,10 @@ export function groupFlashcardDashboardActivities({
 
   traditionalReviews.forEach(({ review, status }) => {
     if (!review?.id || !["overdue", "due"].includes(status)) return;
+    // Dashboard activities belong to the currently open traditional cycle.
+    // Individual card/error records remain untouched and can surface again
+    // when a later traditional stage becomes due.
+    if (review.status === "concluida") return;
     const target = resolveReviewFlashcardTarget(review, roadmap);
     const subjectId = target?.subjectId || String(review.subjectId || "");
     const topicId = target?.topicId || String(review.topicId || "");
@@ -958,10 +962,7 @@ export function groupFlashcardDashboardActivities({
     });
     group.subject = subject?.subject || review.title || "Matéria";
     group.topic = topic?.title || review.topic || "";
-    if (
-      review.status !== "concluida" &&
-      !group.traditional.some((item) => item.id === review.id)
-    ) {
+    if (!group.traditional.some((item) => item.id === review.id)) {
       group.traditional.push({ ...review, activityStatus: status });
     }
     const stageCards = flashcardsForReviewStage(cards, review, {

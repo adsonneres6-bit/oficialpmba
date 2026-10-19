@@ -62,6 +62,10 @@ import {
 import { competitionFilterOptions } from "./lib/competitionFilter.js";
 import { filterRoadmapAndSummarize } from "./lib/roadmapFilterStats.js";
 import {
+  previousScheduledStudyDay,
+  recoverableStudyPendencies,
+} from "./lib/studyPendencies.js";
+import {
   AlertTriangle,
   BarChart3,
   BookOpen,
@@ -4983,12 +4987,25 @@ export default function App() {
     [selectedWeeklyDayRaw],
   );
   const overdueStudyItems = useMemo(
-    () =>
-      effectiveWeeklySchedule.filter(
-        (item) => item.carryover && item.status !== "concluido",
-      ),
-    [effectiveWeeklySchedule],
+    () => recoverableStudyPendencies(
+      effectiveWeeklySchedule,
+      currentStudyDayKey,
+      currentStudyWeek,
+    ),
+    [effectiveWeeklySchedule, currentStudyDayKey, currentStudyWeek],
   );
+  const overdueStudySourceLabel = useMemo(() => {
+    const labels = [...new Set(
+      overdueStudyItems.map(
+        (item) =>
+          item.carryoverOriginalDay ||
+          (item.carryoverFrom && item.carryoverFrom !== "dia anterior"
+            ? item.carryoverFrom
+            : dayLabel(item.dayKey)),
+      ),
+    )];
+    return labels.length === 1 ? labels[0] : "dias anteriores";
+  }, [overdueStudyItems]);
   const dashboardStudyItems = useMemo(
     () =>
       schedule
@@ -6473,8 +6490,13 @@ export default function App() {
 
     const carryQueue = incomingPendencies.map((item) => {
       const rootId = item.carryoverSourceId || item.id;
+      const alreadyOnTarget =
+        item.carryover &&
+        Number(item.week) === Number(targetWeek) &&
+        item.dayKey === targetDayKey;
       const carryoverCount =
-        Number(item.carryoverCount || 0) + (targetDayKey === "domingo" ? 0 : 1);
+        Number(item.carryoverCount || 0) +
+        (alreadyOnTarget || targetDayKey === "domingo" ? 0 : 1);
       return {
         ...item,
         id: `carry-${rootId}-to-w${targetWeek}-${targetDayKey}`,
@@ -6754,8 +6776,8 @@ export default function App() {
     if (blockUntilStudyStartDate()) return;
     const targetDayKey = currentStudyDayKey || TODAY_DAY_KEY;
     const targetWeek = Number(currentStudyWeek || effectiveCycleWeek || 1);
-    const sourceDayKey = previousStudyDayKey(targetDayKey);
-    if (!sourceDayKey) {
+    const source = previousScheduledStudyDay(targetDayKey, targetWeek);
+    if (!source) {
       openConfirmDialog({
         title: "Nenhuma pendência anterior",
         message: "Não há um dia de estudo anterior neste ciclo para recuperar.",
@@ -6766,41 +6788,9 @@ export default function App() {
       });
       return;
     }
-    const sourceWeek =
-      targetDayKey === "segunda" ? Math.max(1, targetWeek - 1) : targetWeek;
-
-    const previousItems = normalizeScheduleItems(
-      effectiveWeeklySchedule,
-      scheduleConfig,
-    ).filter(
-      (item) =>
-        Number(item.week) === Number(sourceWeek) &&
-        item.dayKey === sourceDayKey &&
-        item.status !== "concluido" &&
-        ![
-          "questoes",
-          "simulado",
-          "caderno_erros",
-          "planejamento",
-        ].includes(item.subjectId),
-    );
-    const activeCarryoverSources = new Set(
-      effectiveWeeklySchedule
-        .filter((item) => item.carryover && item.status !== "concluido")
-        .map((item) => item.carryoverSourceId || item.id),
-    );
-    const uniquePreviousItems = [
-      ...new Map(
-        previousItems.map((item) => [
-          item.carryoverSourceId || item.id,
-          item,
-        ]),
-      ).values(),
-    ].filter(
-      (item) =>
-        !activeCarryoverSources.has(item.carryoverSourceId || item.id) ||
-        item.carryover,
-    );
+    const sourceDayKey = source.dayKey;
+    const sourceWeek = source.week;
+    const uniquePreviousItems = overdueStudyItems;
 
     const missingQuestionsToCarry = Math.max(
       0,
@@ -10216,7 +10206,7 @@ export default function App() {
                           <div className="rounded-3xl border-2 border-red-200 bg-red-50 p-4 text-sm text-red-800">
                             <b>Pendentes do dia anterior:</b>{" "}
                             {overdueStudyItems.length} pendente(s) de{" "}
-                            {overdueStudyItems[0].carryoverFrom}. Priorize antes
+                            {overdueStudySourceLabel}. Priorize antes
                             do estudo normal do dia.
                           </div>
                         )}
@@ -10264,7 +10254,7 @@ export default function App() {
                                           onClick={() => completeReview(review.id)}
                                           className="rounded-lg bg-emerald-700 px-2.5 py-1.5 text-xs font-bold text-white"
                                         >
-                                          Concluir
+                                          Concluir revisão tradicional
                                         </button>
                                       </div>
                                     </div>
@@ -10295,7 +10285,7 @@ export default function App() {
                                           onClick={() => review && startFlashcardsForReview(review)}
                                           className="rounded-lg bg-amber-800 px-2.5 py-1.5 text-xs font-bold text-white"
                                         >
-                                          Estudar etapa
+                                          Opcional: revisar flashcards
                                         </button>
                                       </div>
                                     );
@@ -13146,6 +13136,12 @@ export default function App() {
                 title="Revisões"
                 subtitle="Filtre revisões atuais, vencidas, 24 horas, 7 dias, 15 dias e 30 dias."
               />
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
+                <p className="font-black">Escolha as atividades desta sessão</p>
+                <p className="mt-1">
+                  A revisão tradicional é a única atividade necessária para concluir o caderno. Flashcards e erros de questões são opcionais e independentes: use os botões de cada atividade se quiser incluí-la. Você pode concluir a revisão tradicional mesmo sem fazer nenhuma delas.
+                </p>
+              </div>
               {overdueReviews.length > 0 && (
                 <div className="rounded-3xl border-2 border-red-200 bg-red-50 p-5 text-red-800 shadow-sm">
                   <p className="text-xs font-black uppercase tracking-[0.18em]">
@@ -13289,7 +13285,7 @@ export default function App() {
                             </p>
                             <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
                               <p className="font-black">
-                                Etapa do assunto: {review.type}
+                                Revisão do assunto: {review.title}
                               </p>
                               <p className="mt-1">
                                 Próxima revisão do assunto:{" "}
@@ -13297,11 +13293,11 @@ export default function App() {
                                 A data acima ({review.date}) é a data global desta etapa.
                               </p>
                               <p className="mt-2">
-                                Atividade tradicional:{" "}
+                                Revisão tradicional (obrigatória):{" "}
                                 {isDone ? "concluída" : isRunning ? "em andamento" : "pendente"}.
                               </p>
                               <p>
-                                Flashcards: {topicFlashcards.length} cadastrado(s) •{" "}
+                                Flashcards (opcional): {topicFlashcards.length} cadastrado(s) •{" "}
                                 {reviewFlashcards.length
                                   ? `${reviewFlashcards.length} disponível(is) nesta etapa`
                                   : topicFlashcards.length
@@ -13315,8 +13311,8 @@ export default function App() {
                                 </p>
                               )}
                               <p className="mt-1">
-                                Erros de questÃµes: {topicQuestionErrors.length} cadastrada(s) Â·{" "}
-                                {pendingTopicQuestionErrors.length} pendente(s) de reforÃ§o.
+                                Erros de questões (opcional): {topicQuestionErrors.length} cadastrado(s) ·{" "}
+                                {pendingTopicQuestionErrors.length} pendente(s) de reforço.
                               </p>
                             </div>
                             {flashcardActivity?.totalCards > 0 && (
@@ -13354,7 +13350,7 @@ export default function App() {
                                 }
                                 className="rounded-2xl bg-stone-950 px-4 py-3 text-sm font-semibold text-white"
                               >
-                                <CheckSquare size={15} className="inline" /> Retomar erros ({pendingTopicQuestionErrors.length})
+                                <CheckSquare size={15} className="inline" /> Opcional: revisar erros ({pendingTopicQuestionErrors.length})
                               </button>
                             )}
                             {reviewFlashcards.length > 0 && (
@@ -13362,8 +13358,7 @@ export default function App() {
                                 onClick={() => startFlashcardsForReview(review)}
                                 className="rounded-2xl bg-amber-800 px-4 py-3 text-sm font-semibold text-white"
                               >
-                                <Layers size={15} className="inline" /> Estudar etapa{" "}
-                                {review.type} ({reviewFlashcards.length})
+                                <Layers size={15} className="inline" /> Opcional: revisar flashcards ({reviewFlashcards.length})
                               </button>
                             )}
                             {!isDone && !isRunning && (
@@ -13380,7 +13375,7 @@ export default function App() {
                                 className="rounded-2xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white"
                               >
                                 <CheckCircle2 size={15} className="inline" />{" "}
-                                Concluir
+                                Concluir revisão tradicional
                               </button>
                             )}
                             {isDone && (
